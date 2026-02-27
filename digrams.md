@@ -1,366 +1,184 @@
-1\. System context / container diagram
+# ArcFlow Treasury – Architecture Diagrams
 
+## 1. System Context / Container Diagram
 
-
+```mermaid
 flowchart LR
+  User["User Wallet & Browser"] --> UI["ArcFlow Treasury UI (React SPA)"]
+  UI -->|EVM tx & calls via wallet| Contracts["Arc Smart Contracts\nArcFlowEscrow / ArcFlowStreams / ArcFlowPayoutRouter"]
+  UI -->|HTTP REST| API["Backend API (Express)"]
+  Contracts -->|Events: PayoutInstruction| Worker["Event Listener Worker (Node + ethers)"]
+  Worker -->|Update payout state| API
+  API -->|Future: USDC payouts| Circle["Circle Wallets / Gateway (External Services)"]
+```
 
-&nbsp; User\[User Wallet \& Browser] --> UI\[ArcFlow Treasury UI<br/>(React SPA)]
+## 2. Component-Level Diagram
 
-&nbsp; UI -->|EVM tx \& calls via wallet| Contracts\[Arc Smart Contracts<br/>ArcFlowEscrow / ArcFlowStreams / ArcFlowPayoutRouter]
-
-&nbsp; UI -->|HTTP (REST)| API\[Backend API<br/>(Express)]
-
-&nbsp; Contracts -->|Events: PayoutInstruction| Worker\[Event Listener Worker<br/>(Node + ethers)]
-
-&nbsp; Worker -->|Update payout state| API
-
-&nbsp; API -->|Future: USDC payouts| Circle\[Circle Wallets / Gateway<br/>(External Services)]
-
-
-
-2\. Component-level diagram
-
+```mermaid
 flowchart TB
+  subgraph Frontend["Frontend (React SPA)"]
+    EscrowPage["EscrowPage.tsx"]
+    StreamsPage["StreamsPage.tsx"]
+    PayoutsPage["PayoutsPage.tsx"]
+    ContractsTS["contracts.ts"]
+  end
 
-&nbsp; subgraph Frontend\[Frontend (React SPA)]
+  subgraph Contracts["Arc Contracts"]
+    Escrow["ArcFlowEscrow"]
+    Streams["ArcFlowStreams"]
+    Router["ArcFlowPayoutRouter"]
+  end
 
-&nbsp;   EscrowPage\[EscrowPage.tsx]
+  subgraph Backend["Backend"]
+    API["Express Server (server.ts)"]
+    Worker["Event Listener (worker.ts)"]
+    Store[("In-memory Payout Store")]
+  end
 
-&nbsp;   StreamsPage\[StreamsPage.tsx]
+  subgraph Circle["Circle Infrastructure (Future)"]
+    Wallets["Circle Wallets"]
+    Gateway["Circle Gateway / CCTP"]
+  end
 
-&nbsp;   PayoutsPage\[PayoutsPage.tsx]
+  EscrowPage --> ContractsTS
+  StreamsPage --> ContractsTS
+  PayoutsPage --> ContractsTS
+  ContractsTS --> Escrow
+  ContractsTS --> Streams
+  ContractsTS --> Router
+  PayoutsPage --> API
+  Router -->|PayoutInstruction events| Worker
+  Worker --> Store
+  API --> Store
+  Worker --> Wallets
+  Wallets --> Gateway
+```
 
-&nbsp;   ContractsTS\[contracts.ts]
+## 3. Escrow Flow – Sequence Diagram
 
-&nbsp; end
-
-
-
-&nbsp; subgraph Contracts\[Arc Contracts]
-
-&nbsp;   Escrow\[ArcFlowEscrow]
-
-&nbsp;   Streams\[ArcFlowStreams]
-
-&nbsp;   Router\[ArcFlowPayoutRouter]
-
-&nbsp; end
-
-
-
-&nbsp; subgraph Backend\[Backend]
-
-&nbsp;   API\[Express Server<br/>(server.ts)]
-
-&nbsp;   Worker\[Event Listener<br/>(worker.ts)]
-
-&nbsp;   Store\[(In-memory Payout Store)]
-
-&nbsp; end
-
-
-
-&nbsp; subgraph Circle\[Circle Infrastructure (Future)]
-
-&nbsp;   Wallets\[Circle Wallets]
-
-&nbsp;   Gateway\[Circle Gateway / CCTP]
-
-&nbsp; end
-
-
-
-&nbsp; EscrowPage --> ContractsTS
-
-&nbsp; StreamsPage --> ContractsTS
-
-&nbsp; PayoutsPage --> ContractsTS
-
-
-
-&nbsp; ContractsTS --> Escrow
-
-&nbsp; ContractsTS --> Streams
-
-&nbsp; ContractsTS --> Router
-
-
-
-&nbsp; PayoutsPage --> API
-
-
-
-&nbsp; Router -->|PayoutInstruction events| Worker
-
-&nbsp; Worker --> Store
-
-&nbsp; API --> Store
-
-
-
-&nbsp; Worker --> Wallets
-
-&nbsp; Wallets --> Gateway
-
-
-
-3\. Escrow flow – sequence diagram
-
+```mermaid
 sequenceDiagram
+  participant U as User (Payer)
+  participant UI as Frontend UI
+  participant W as Wallet
+  participant E as ArcFlowEscrow (Contract)
 
-&nbsp; participant U as User (Payer)
+  U->>UI: Open Escrow tab, fill form
+  UI->>W: Request signature for createEscrow(...)
+  W->>E: createEscrow(payee, token, amount, expiry, arbitrator)
+  E-->>W: tx receipt (escrowId)
+  W-->>UI: tx hash & escrowId
+  UI->>E: escrows(escrowId)
+  E-->>UI: Escrow struct (payer, payee, amount, etc.)
+  UI-->>U: Show escrow details & status
 
-&nbsp; participant UI as Frontend UI
+  note over U,E: After issue arises
+  U->>UI: Click "Raise dispute"
+  UI->>W: Request signature for raiseDispute(escrowId)
+  W->>E: raiseDispute(escrowId)
+  E-->>UI: updated state (disputed = true)
 
-&nbsp; participant W as Wallet
+  note over E: Arbitrator resolves
+  U->>UI: Arbitrator clicks "Resolve"
+  UI->>W: Request signature for resolveDispute(escrowId, releaseToPayee)
+  W->>E: resolveDispute(escrowId, releaseToPayee)
+  E-->>UI: updated state (released or refunded)
+```
 
-&nbsp; participant E as ArcFlowEscrow (Contract)
+## 4. Vesting Stream Flow – Sequence Diagram
 
-
-
-&nbsp; U->>UI: Open Escrow tab, fill form
-
-&nbsp; UI->>W: Request signature for createEscrow(...)
-
-&nbsp; W->>E: createEscrow(payee, token, amount, expiry, arbitrator)
-
-&nbsp; E-->>W: tx receipt (escrowId)
-
-&nbsp; W-->>UI: tx hash \& escrowId
-
-&nbsp; UI->>E: escrows(escrowId)
-
-&nbsp; E-->>UI: Escrow struct (payer, payee, amount, etc.)
-
-&nbsp; UI-->>U: Show escrow details \& status
-
-
-
-&nbsp; note over U,E: After issue arises
-
-
-
-&nbsp; U->>UI: Click "Raise dispute"
-
-&nbsp; UI->>W: Request signature for raiseDispute(escrowId)
-
-&nbsp; W->>E: raiseDispute(escrowId)
-
-&nbsp; E-->>UI: updated state (disputed = true)
-
-
-
-&nbsp; note over E: Arbitrator resolves
-
-
-
-&nbsp; U->>UI: Arbitrator clicks "Resolve"
-
-&nbsp; UI->>W: Request signature for resolveDispute(escrowId, releaseToPayee)
-
-&nbsp; W->>E: resolveDispute(escrowId, releaseToPayee)
-
-&nbsp; E-->>UI: updated state (released or refunded)
-
-
-
-
-
-4\. Vesting stream flow – sequence diagram
-
-
-
+```mermaid
 sequenceDiagram
+  participant Emp as Employer
+  participant UIEmp as UI (Employer)
+  participant WEmp as Wallet (Employer)
+  participant S as ArcFlowStreams
+  participant EE as Employee
+  participant UIEE as UI (Employee)
+  participant WEE as Wallet (Employee)
 
-&nbsp; participant Emp as Employer
+  Emp->>UIEmp: Configure stream (employee, amount, times)
+  UIEmp->>WEmp: Request signature for createStream(...)
+  WEmp->>S: createStream(employee, token, totalAmount, start, cliff, end)
+  S-->>WEmp: tx receipt (streamId)
+  WEmp-->>UIEmp: tx hash & streamId
 
-&nbsp; participant UIEmp as UI (Employer)
+  note over S,EE: Time passes, some amount vests
+  EE->>UIEE: Open Payroll/Vesting, enter streamId
+  UIEE->>S: getWithdrawable(streamId)
+  S-->>UIEE: withdrawableAmount
+  UIEE-->>EE: Display withdrawable amount
+  EE->>UIEE: Click "Withdraw"
+  UIEE->>WEE: Request signature for withdraw(streamId)
+  WEE->>S: withdraw(streamId)
+  S-->>WEE: tx receipt
+  WEE-->>UIEE: update balance
+```
 
-&nbsp; participant WEmp as Wallet (Employer)
+## 5. Payout Batch Flow – Sequence Diagram
 
-&nbsp; participant S as ArcFlowStreams
-
-&nbsp; participant EE as Employee
-
-&nbsp; participant UIEE as UI (Employee)
-
-&nbsp; participant WEE as Wallet (Employee)
-
-
-
-&nbsp; Emp->>UIEmp: Configure stream (employee, amount, times)
-
-&nbsp; UIEmp->>WEmp: Request signature for createStream(...)
-
-&nbsp; WEmp->>S: createStream(employee, token, totalAmount, start, cliff, end)
-
-&nbsp; S-->>WEmp: tx receipt (streamId)
-
-&nbsp; WEmp-->>UIEmp: tx hash \& streamId
-
-
-
-&nbsp; note over S,EE: Time passes, some amount vests
-
-
-
-&nbsp; EE->>UIEE: Open Payroll/Vesting, enter streamId
-
-&nbsp; UIEE->>S: getWithdrawable(streamId)
-
-&nbsp; S-->>UIEE: withdrawableAmount
-
-&nbsp; UIEE-->>EE: Display withdrawable amount
-
-
-
-&nbsp; EE->>UIEE: Click "Withdraw"
-
-&nbsp; UIEE->>WEE: Request signature for withdraw(streamId)
-
-&nbsp; WEE->>S: withdraw(streamId)
-
-&nbsp; S-->>WEE: tx receipt
-
-&nbsp; WEE-->>UIEE: update balance
-
-
-
-
-
-5\. Payout batch flow – sequence diagram
-
+```mermaid
 sequenceDiagram
+  participant U as User (Treasury)
+  participant UI as Frontend UI
+  participant W as Wallet
+  participant R as ArcFlowPayoutRouter
+  participant WK as Worker
+  participant API as Backend API
+  participant C as Circle (Future)
 
-&nbsp; participant U as User (Treasury)
+  U->>UI: Configure payout batch (recipients, amounts, chains)
+  UI->>W: Request signature for createBatchPayout(...)
+  W->>R: createBatchPayout(token, recipients[], amounts[], destinationChains[])
+  R-->>W: tx receipt & batchId
+  R-->>WK: emit PayoutInstruction events
+  WK->>API: Update payouts[batchId] with QUEUED records
 
-&nbsp; participant UI as Frontend UI
+  par Future: initiate payouts
+    WK->>C: Call Circle Wallets/Gateway for each payout
+    C-->>API: Webhook callback with result
+    API->>API: Update payout status to COMPLETED/FAILED
+  end
 
-&nbsp; participant W as Wallet
+  U->>UI: Check batch status
+  UI->>API: GET /payouts/:batchId/status
+  API-->>UI: JSON with payouts and statuses
+  UI-->>U: Render per-recipient status
+```
 
-&nbsp; participant R as ArcFlowPayoutRouter
+## 6. Escrow Contract Internal Logic – Flowchart
 
-&nbsp; participant WK as Worker
-
-&nbsp; participant API as Backend API
-
-&nbsp; participant C as Circle (Future)
-
-
-
-&nbsp; U->>UI: Configure payout batch (recipients, amounts, chains)
-
-&nbsp; UI->>W: Request signature for createBatchPayout(...)
-
-&nbsp; W->>R: createBatchPayout(token, recipients\[], amounts\[], destinationChains\[])
-
-&nbsp; R-->>W: tx receipt \& batchId
-
-&nbsp; R-->>WK: emit PayoutInstruction events
-
-
-
-&nbsp; WK->>API: Update payouts\[batchId] with QUEUED records
-
-
-
-&nbsp; par Future: initiate payouts
-
-&nbsp;   WK->>C: Call Circle Wallets/Gateway for each payout
-
-&nbsp;   C-->>API: Webhook callback with result
-
-&nbsp;   API->>API: Update payout status to COMPLETED/FAILED
-
-&nbsp; end
-
-
-
-&nbsp; U->>UI: Check batch status
-
-&nbsp; UI->>API: GET /payouts/:batchId/status
-
-&nbsp; API-->>UI: JSON with payouts and statuses
-
-&nbsp; UI-->>U: Render per‑recipient status
-
-
-
-
-
-6\. Escrow contract internal logic – flowchart
-
+```mermaid
 flowchart TD
+  A["createEscrow()"] --> B{valid inputs?}
+  B -- no --> E["revert InvalidEscrow"]
+  B -- yes --> C["store Escrow struct"]
+  C --> D["transferFrom(payer -> contract)"]
+  D --> F["emit EscrowCreated"]
 
-&nbsp; A\[createEscrow()] --> B{valid inputs?}
+  subgraph AutoRelease
+    G["autoRelease(id)"] --> H{exists and open?}
+    H -- no --> I[revert]
+    H -- yes --> J{now >= expiry?}
+    J -- no --> K["revert TooEarly"]
+    J -- yes --> L{disputed?}
+    L -- yes --> M["revert AlreadyDisputed"]
+    L -- no --> N["mark released = true"]
+    N --> O["_payout(token, payee, amount)"]
+    O --> P["emit EscrowReleased"]
+  end
+```
 
-&nbsp; B -- no --> E\[revert InvalidEscrow]
+## 7. Streams Vesting Logic – Flowchart
 
-&nbsp; B -- yes --> C\[store Escrow struct]
-
-&nbsp; C --> D\[transferFrom(payer -> contract)]
-
-&nbsp; D --> F\[emit EscrowCreated]
-
-
-
-&nbsp; subgraph AutoRelease
-
-&nbsp;   G\[autoRelease(id)] --> H{exists and open?}
-
-&nbsp;   H -- no --> I\[revert]
-
-&nbsp;   H -- yes --> J{now >= expiry?}
-
-&nbsp;   J -- no --> K\[revert TooEarly]
-
-&nbsp;   J -- yes --> L{disputed?}
-
-&nbsp;   L -- yes --> M\[revert AlreadyDisputed]
-
-&nbsp;   L -- no --> N\[mark released = true]
-
-&nbsp;   N --> O\[\_payout(token, payee, amount)]
-
-&nbsp;   O --> P\[emit EscrowReleased]
-
-&nbsp; end
-
-
-
-
-
-7\. Streams vesting logic – flowchart
-
+```mermaid
 flowchart TD
-
-&nbsp; S\[Time t, Stream s] --> A{t <= cliff?}
-
-&nbsp; A -- yes --> B\[vested = 0]
-
-&nbsp; A -- no --> C{t >= end?}
-
-&nbsp; C -- yes --> D\[vested = totalAmount]
-
-&nbsp; C -- no --> E\[elapsed = t - cliff]
-
-&nbsp; E --> F\[duration = end - cliff]
-
-&nbsp; F --> G\[vested = totalAmount \* elapsed / duration]
-
-&nbsp; G --> H\[withdrawable = vested - withdrawn]
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+  S["Time t, Stream s"] --> A{t <= cliff?}
+  A -- yes --> B["vested = 0"]
+  A -- no --> C{t >= end?}
+  C -- yes --> D["vested = totalAmount"]
+  C -- no --> E["elapsed = t - cliff"]
+  E --> F["duration = end - cliff"]
+  F --> G["vested = totalAmount * elapsed / duration"]
+  G --> H["withdrawable = vested - withdrawn"]
+```

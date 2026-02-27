@@ -2,9 +2,9 @@
 
 ## Overview
 
-ArcFlow Treasury is an Arc‑native treasury and payout orchestration system for USDC and EURC. It provides conditional escrow, programmable payroll/vesting streams, and multi‑recipient payout batches from a single stablecoin‑centric interface.
+ArcFlow Treasury is an Arc-native treasury and payout orchestration system for USDC and EURC. It provides conditional escrow with dispute resolution, programmable payroll vesting streams, and multi-recipient batch payouts from a single stablecoin-centric web interface. Arc is treated as the primary execution and state hub — all financial logic runs on-chain, providing full auditability and immutability. The backend exists solely to listen for payout events and track their off-chain settlement progress via Circle.
 
-The system is composed of smart contracts deployed on Arc, a lightweight backend service for event processing and payout tracking, and a React-based frontend that acts as a treasury console. Arc is treated as the primary execution and state hub, while the backend is designed to integrate with Circle infrastructure for cross‑chain settlement in a production setting.
+The system is composed of three distinct layers: Solidity smart contracts deployed on Arc, a lightweight Node/Express backend that processes on-chain events and exposes a REST status API, and a React SPA that serves as the treasury console. The design intentionally keeps the frontend stateless with respect to on-chain data (all reads go through the user's wallet), while the backend handles asynchronous Circle-based settlement tracking. This separation allows each layer to evolve independently as the integration matures towards production.
 
 ---
 
@@ -12,120 +12,129 @@ The system is composed of smart contracts deployed on Arc, a lightweight backend
 
 ### Functional
 
-- Support creation and management of USDC/EURC escrows with disputes and automatic release.
-- Support creation and management of vesting streams for payroll/vesting use cases.
-- Support creation and tracking of multi‑recipient payout batches.
-- Provide a unified web UI for interacting with escrows, streams, and payouts.
-- Expose an API for querying payout status by batch ID.
-- Emit events suitable for integration with Circle Wallets, Gateway, and related services.
+- Create and manage USDC/EURC escrows with configurable expiry, optional arbitrator, dispute raising, and auto-release.
+- Create and manage linear vesting streams with cliff support; employees withdraw on demand, employers can revoke with a fair split.
+- Create multi-recipient payout batches in a single transaction; each recipient specifies a destination chain.
+- Provide a unified treasury dashboard showing obligations locked in escrows, streams, and pending batches.
+- Persist a "My Escrows / Streams / Batches" list per user session so items survive page refresh (localStorage).
+- Expose a REST API for querying payout batch status by ID, driven by on-chain `PayoutInstruction` events.
+- Route off-chain payout settlement through Circle Wallets API (same-chain) and Circle Gateway/CCTP (cross-chain).
 
-### Non‑functional
+### Non-Functional
 
-- **Performance:** Low latency for user interactions; rely on Arc’s fast finality for on‑chain operations.
-- **Scalability:** Ability to handle increasing numbers of escrows, streams, and payout batches by horizontal scaling of backend/frontend and leveraging Arc’s scalability.
-- **Reliability:** Event‑driven processing for payouts with clear status tracking.
-- **Security:** Safe smart contract patterns, explicit permission checks, and stablecoin‑centric design.
-- **Maintainability:** Clear separation of concerns between contracts, backend, and frontend; modular codebase.
-- **Extensibility:** Straightforward path to integrate Circle APIs and additional policy/agent logic without restructuring the system.
+- **Performance:** Sub-second UI interactions; rely on Arc's fast finality for on-chain state.
+- **Correctness:** Solidity 0.8.x with explicit overflow protection; all critical inputs validated on-chain.
+- **Reliability:** Event-driven payout tracking; backend can be restarted and re-synced from chain history.
+- **Security:** No private keys in frontend; secrets in environment variables; 2-step confirmation for destructive UI actions.
+- **Maintainability:** Clear separation of concerns — contracts, backend, and frontend are independently testable.
+- **Extensibility:** Straightforward path from stub Circle integration to live payouts without structural changes.
 
 ---
 
-## High‑Level Architecture
+## High-Level Architecture
 
-The system comprises three main layers:
+The system is built around three main layers that communicate through two interfaces: wallet-mediated on-chain calls from the frontend to contracts, and HTTP REST calls from the frontend to the backend.
 
-- **On‑chain layer (Arc smart contracts)**  
-  Implements core financial logic: escrow, vesting streams, and payout batches.
+- **On-chain layer** — Three Solidity contracts on Arc implement all financial logic. The frontend calls them directly through the user's injected wallet; no server-side signing occurs.
+- **Backend layer** — A Node/Express server runs alongside an event listener worker. The worker subscribes to `PayoutInstruction` events from `ArcFlowPayoutRouter` and maintains an in-memory payout status store. The Express API exposes this store over HTTP.
+- **Frontend layer** — A Vite + React SPA provides the treasury console. It calls contracts via ethers.js, queries the backend API for payout status, and persists session state in `localStorage`.
 
-- **Backend layer (Node/Express + worker)**  
-  Provides a small HTTP API for payout status and runs an event listener that subscribes to on‑chain payout events and maintains in‑memory state.
-
-- **Frontend layer (React SPA)**  
-  Provides a treasury console for users to manage escrows, streams, and payouts. It interacts directly with smart contracts via the user’s wallet and with the backend via HTTP.
-
-### System Context / Container Diagram
+### System Context Diagram
 
 ```mermaid
 flowchart LR
-  User[User Wallet & Browser] --> UI[ArcFlow Treasury UI<br/>(React SPA)]
-  UI -->|EVM tx & calls via wallet| Contracts[Arc Smart Contracts<br/>ArcFlowEscrow / ArcFlowStreams / ArcFlowPayoutRouter]
-  UI -->|HTTP (REST)| API[Backend API<br/>(Express)]
-  Contracts -->|Events: PayoutInstruction| Worker[Event Listener Worker<br/>(Node + ethers)]
-  Worker -->|Update payout state| API
-  API -->|Future: USDC transfers| Circle[Circle Wallets / Gateway<br/>(External Services)]
+  User["User\n(MetaMask / Wallet)"]
+  UI["ArcFlow Frontend\nVite + React SPA\n:5173"]
+  API["Backend API\nExpress + TypeScript\n:3000"]
+  Worker["Event Worker\nNode + ethers.js"]
+  Arc["Arc EVM Testnet\nChain ID 5042002"]
+  Contracts["Smart Contracts\nEscrow · Streams · PayoutRouter"]
+  Store["In-Memory Store\nPayoutStatus"]
+  Circle["Circle\nWallets / Gateway / CCTP"]
+
+  User -->|"signs tx"| UI
+  UI -->|"eth_sendTransaction\neth_call"| Arc
+  Arc --- Contracts
+  UI -->|"GET /payouts/:id/status\nGET /status"| API
+  API -->|"reads"| Store
+  Worker -->|"writes"| Store
+  Worker -->|"subscribes to events"| Arc
+  Worker -->|"createTransfer (stub)"| Circle
+  Circle -.->|"cross-chain settlement\n(production)"| Arc
 ```
 
-This diagram shows the main containers and their interactions. The user interacts with the UI, which uses their wallet to call Arc smart contracts. The backend API is queried by the UI for payout status, and a worker process listens to contract events to maintain payout state, which can be used to drive Circle‑based transfers in a full deployment.
+The user interacts solely with the frontend, which fans out to Arc (via wallet) and the backend API (via HTTP). The backend worker runs independently, consuming events from Arc and driving Circle-based off-chain settlement. Dashed arrows indicate a production path not yet active in the MVP.
 
 ---
 
 ## Component Details
 
-### 1. Web Client – ArcFlow Treasury UI (React SPA)
+### 1. ArcFlow Frontend (React SPA)
 
 **Responsibilities**
 
-- Provide user interface for:
-  - Creating and managing escrows.
-  - Creating and managing vesting streams.
-  - Creating and monitoring payout batches.
-- Connect to Arc via injected wallet (e.g. MetaMask) for signed transactions.
-- Connect to backend HTTP API to retrieve payout status and system health.
+- Provide four pages: Dashboard, Escrow & Disputes, Payroll & Vesting, Payout Batches.
+- Connect to Arc via injected wallet (MetaMask) using ethers.js v6 for transaction signing and contract reads.
+- Poll `GET /payouts/:batchId/status` on the backend for payout tracking.
+- Poll `GET /status` every 30 seconds for API health display in the topbar.
+- Persist created item IDs in `localStorage` (`arcflow_my_escrows`, `arcflow_my_streams`, `arcflow_my_batches`) so list views survive refresh.
+- Provide loading skeletons, empty states, error states, and toast notifications for all async operations.
+- Enforce 2-step confirmation for destructive actions (raise dispute, revoke stream).
 
-**Main Technologies**
+**Technologies**
 
-- React
-- Vite
-- TypeScript
-- ethers v6
+| Tool | Role |
+|---|---|
+| Vite 7 + React 18 | SPA framework and dev server |
+| TypeScript 5.x | Type safety |
+| Tailwind CSS 3.x | Utility-first styling with glassmorphism design system |
+| react-router-dom v6 | Client-side routing (SPA navigation, no page reloads) |
+| ethers.js v6 | Wallet integration and contract calls |
+| react-hot-toast | Toast notification system |
+| lucide-react | Icon library |
 
 **Key Data**
 
-- Contract addresses and ABI definitions.
-- User input for escrows (payee, amount, expiry, arbitrator).
-- User input for streams (employee, amount, timing).
-- User input for payout batches (recipients, amounts, destination chains).
-- Local state for last created IDs, cached statuses, and basic metrics.
+- Contract ABIs and deployed addresses (from environment variables).
+- User form state for escrow, stream, and batch creation.
+- `localStorage` lists: `MyEscrow[]`, `MyStream[]`, `MyBatch[]`.
+- Fetched payout batch status from the backend API.
 
 **Communication**
 
-- **To Contracts:** via wallet provider using ethers; sends transactions and performs read calls.
-- **To Backend:** HTTP requests to `GET /status` and `GET /payouts/:batchId/status`.
+- → **Arc contracts:** `eth_sendTransaction` (writes), `eth_call` (reads) via MetaMask.
+- → **Backend API:** `fetch` to `GET /status` and `GET /payouts/:batchId/status`.
 
 ---
 
 ### 2. Arc Smart Contracts
 
+All three contracts are written in Solidity 0.8.20, use OpenZeppelin 5.x libraries, and are deployed on Arc (Chain ID 5042002). They are called directly by the frontend; the backend only reads their events.
+
 #### 2.1 ArcFlowEscrow
 
 **Responsibilities**
 
-- Lock USDC/EURC in escrow on Arc.
-- Track escrow lifecycle: creation, dispute, resolution, and automatic release.
-- Apply protocol fee logic for payouts to an on‑chain fee collector.
-
-**Main Technologies**
-
-- Solidity 0.8.x
-- Deployed on Arc (EVM chain)
+- Lock USDC/EURC in escrow between a payer and payee.
+- Track the full escrow lifecycle: creation → dispute → resolution or auto-release.
+- Apply a configurable protocol fee (basis points) on payout.
 
 **Key Data**
 
-- `Escrow` struct:
-  - `payer`, `payee`
-  - `token`
-  - `amount`
-  - `expiry`
-  - `arbitrator`
-  - `disputed`, `released`, `refunded`
-- Global configuration:
-  - `feeCollector`
-  - `feeBps` (basis points)
+```
+Escrow {
+  payer, payee: address
+  token: address           // USDC or EURC
+  amount: uint256
+  expiry: uint256          // Unix timestamp
+  arbitrator: address
+  disputed, released, refunded: bool
+}
+feeCollector: address
+feeBps: uint256
+```
 
-**Communication**
-
-- Called by the frontend via the user’s wallet.
-- Emits events (`EscrowCreated`, `EscrowDisputed`, `EscrowResolved`, `EscrowReleased`, `EscrowRefunded`) for monitoring and analytics (not strictly used by backend in MVP).
+**Events emitted:** `EscrowCreated`, `EscrowDisputed`, `EscrowResolved`, `EscrowReleased`, `EscrowRefunded`
 
 ---
 
@@ -133,29 +142,23 @@ This diagram shows the main containers and their interactions. The user interact
 
 **Responsibilities**
 
-- Represent employer‑funded vesting streams.
-- Compute vested amounts over time.
-- Handle employee withdrawals of vested funds.
-- Allow employer to revoke streams while fairly splitting vested vs unvested funds.
-
-**Main Technologies**
-
-- Solidity 0.8.x
-- Deployed on Arc
+- Hold employer-funded linear vesting streams with an optional cliff period.
+- Compute vested amount on demand: linear interpolation between cliff and end.
+- Allow employee to withdraw vested-but-not-withdrawn tokens at any time.
+- Allow employer to revoke: vested portion goes to employee, remainder refunded.
 
 **Key Data**
 
-- `Stream` struct:
-  - `employer`, `employee`
-  - `token`
-  - `totalAmount`
-  - `start`, `cliff`, `end`
-  - `withdrawn`
+```
+Stream {
+  employer, employee: address
+  token: address
+  totalAmount, withdrawn: uint256
+  start, cliff, end: uint256    // Unix timestamps
+}
+```
 
-**Communication**
-
-- Called by the frontend via the user’s wallet.
-- Emits `StreamCreated`, `Withdrawn`, and `Revoked` events for monitoring.
+**Events emitted:** `StreamCreated`, `Withdrawn`, `Revoked`
 
 ---
 
@@ -163,30 +166,26 @@ This diagram shows the main containers and their interactions. The user interact
 
 **Responsibilities**
 
-- Accept and store batch payout definitions.
-- Deduct total funds from the creator’s wallet.
-- Emit granular `PayoutInstruction` events for off‑chain processing.
-
-**Main Technologies**
-
-- Solidity 0.8.x
-- Deployed on Arc
+- Accept batch payout definitions and lock total funds.
+- Emit one `PayoutInstruction` event per recipient — the primary trigger for off-chain settlement.
+- Store batch metadata for on-chain reference.
 
 **Key Data**
 
-- `Batch` struct:
-  - `creator`
-  - `token`
-  - `totalAmount`
-  - `createdAt`
+```
+Batch {
+  creator: address
+  token: address
+  totalAmount: uint256
+  createdAt: uint256
+}
+```
 
-**Communication**
+**Events emitted:**
+- `BatchCreated(batchId, creator, token, totalAmount)`
+- `PayoutInstruction(batchId, index, recipient, amount, destinationChain)` — one per recipient
 
-- Called by the frontend via the user’s wallet to create batches.
-- Emits:
-  - `BatchCreated(batchId, creator, token, totalAmount)`
-  - `PayoutInstruction(batchId, index, recipient, amount, destinationChain)`
-- These events are consumed by the backend worker.
+**Note:** `destinationChain` is a `bytes32` label (e.g. `BASE`, `AVAX`). The backend maps this to Circle's canonical chain identifiers.
 
 ---
 
@@ -194,33 +193,33 @@ This diagram shows the main containers and their interactions. The user interact
 
 **Responsibilities**
 
-- Expose a small REST API for frontend consumption:
-  - `GET /status` – health and network information.
-  - `GET /payouts/:batchId/status` – payout status for a batch.
-  - `POST /webhook/circle` – webhook endpoint for future Circle integration.
-- Maintain in‑memory state of payouts populated by the worker.
+- Serve `GET /status` — health and network metadata.
+- Serve `GET /payouts/:batchId/status` — aggregated payout status for a batch.
+- Serve `GET /payouts/:batchId/:index/status` — status for a single recipient.
+- Maintain an in-memory `Map<batchId, PayoutStatus[]>` populated by the worker.
 
-**Main Technologies**
-
-- Node.js
-- Express
-- TypeScript
-- ethers v6 (for type sharing and potential additional reads)
+**Technologies:** Node.js 18+, Express 4.x, TypeScript 5.x, Winston 3.x (structured logging)
 
 **Key Data**
 
-- In‑memory map: `payouts[batchId] = PayoutRecord[]`, where each record includes:
-  - `batchId`
-  - `index`
-  - `recipient`
-  - `amount`
-  - `destinationChain`
-  - `status` (`QUEUED`, `COMPLETED`, `FAILED`)
+```typescript
+PayoutStatus {
+  batchId: string
+  index: number
+  recipient: string
+  amount: string            // human-readable (e.g. "100.000000")
+  destinationChain: string  // Circle chain name (e.g. "BASE-SEPOLIA")
+  status: "QUEUED" | "COMPLETED" | "FAILED"
+  circleTransferId?: string
+  createdAt: string
+  updatedAt: string
+}
+```
 
 **Communication**
 
-- Receives requests from frontend over HTTP.
-- Shares in‑memory data with the worker (same process space or shared module).
+- ← Frontend: HTTP GET requests
+- ↔ Worker: shared in-memory module (same process when running `dev:server`)
 
 ---
 
@@ -228,222 +227,212 @@ This diagram shows the main containers and their interactions. The user interact
 
 **Responsibilities**
 
-- Connect to Arc RPC.
-- Subscribe to `PayoutInstruction` events from `ArcFlowPayoutRouter`.
-- Populate and update payout records in the backend’s in‑memory store.
-- In a future version, trigger Circle Wallets/Gateway calls and update statuses accordingly.
+- Connect to Arc RPC via ethers.js `JsonRpcProvider`.
+- Subscribe to past and future `PayoutInstruction` events from `ArcFlowPayoutRouter`.
+- For each event:
+  - Decode event parameters.
+  - Map `bytes32` chain label to Circle chain identifier (e.g. `BASE` → `BASE-SEPOLIA`).
+  - Format amount from wei to human-readable USDC/EURC.
+  - Generate an idempotency key (`arcflow_{batchId}-{index}_{txHash}`).
+  - Call `circleClient.createTransfer()`.
+  - Write `PayoutStatus` record with `QUEUED` status.
 
-**Main Technologies**
+**Technologies:** Node.js 18+, TypeScript 5.x, ethers.js v6, Winston 3.x
 
-- Node.js
-- TypeScript
-- ethers v6
+**Chain identifier mapping**
 
-**Key Data**
-
-- Reads `ARC_RPC_URL` and `ARC_PAYOUT_ROUTER_ADDRESS` from configuration.
-- Writes to shared `payouts` map in the backend module.
-
-**Communication**
-
-- Listens to on‑chain events via WebSocket or HTTP polling.
-- Updates the in‑memory store used by the API server.
-- In future, communicates with Circle APIs (HTTP).
+| Contract `bytes32` | Circle chain name | CCTP domain ID |
+|---|---|---|
+| `ARC` | `ARC-TESTNET` | 5 |
+| `BASE` | `BASE-SEPOLIA` | 6 |
+| `AVAX` / `AVALANCHE` | `AVAX-FUJI` | 1 |
+| `ETH` / `ETHEREUM` | `ETH-SEPOLIA` | 0 |
+| `ARB` / `ARBITRUM` | `ARB-SEPOLIA` | 3 |
+| (unknown) | `ARC-TESTNET` | 5 (fallback) |
 
 ---
 
-### 5. External Integrations – Circle (Future)
+### 5. Circle Integration (Stub → Production)
 
 **Responsibilities (planned)**
 
-- Act as the real payout execution layer:
-  - Circle Wallets: manage USDC balances across chains.
-  - Circle Gateway/CCTP: perform cross‑chain bridging and payouts.
-- Provide webhook events to confirm payout completion or failure.
+- **Same-chain payouts:** Circle Wallets API (`api.circle.com/v1/transfers`) — used when source and destination chains match.
+- **Cross-chain payouts:** Circle Gateway API (`gateway-api-testnet.circle.com/v1/transfer`) with CCTP burn-attest-mint — used when chains differ.
+- **Status updates:** Circle webhook at `POST /webhook/circle` to push `COMPLETED` / `FAILED` states.
 
-**Main Technologies**
+**Current status:** The `circleClient.createTransfer()` method is a stub — it logs the correct endpoint and returns a fake `circleTransferId`. The structure exactly mirrors `circlefin/arc-multichain-wallet` (same SDK, same env variable names, same dual-endpoint routing, same CCTP domain IDs), so switching to live payouts requires only:
 
-- Circle REST APIs
-- `@circle-fin/developer-controlled-wallets` SDK (already listed as a dependency)
-- Webhooks to the backend
+1. Set real `CIRCLE_API_KEY` and `CIRCLE_ENTITY_SECRET`.
+2. Replace stub body in `circleClient.createTransfer()` with real `fetch` calls.
+3. For cross-chain: add EIP-712 `BurnIntent` signing (reference: `arc-multichain-wallet/lib/circle/gateway-sdk.ts → transferGatewayBalanceWithEOA`).
+4. Add `POST /webhook/circle` handler to receive live status updates.
 
-**Circle integration status**
-
-The Circle integration is currently a stub. Its design follows the patterns used in
-`circlefin/arc-multichain-wallet` — same env variable names (`CIRCLE_API_KEY`,
-`CIRCLE_ENTITY_SECRET`), same chain identifier strings (`ARC-TESTNET`, `BASE-SEPOLIA`,
-`AVAX-FUJI`), same two-endpoint split (Wallets API for same-chain, Gateway API for
-cross-chain), and the same CCTP domain IDs per chain. Moving to live payouts is
-primarily a matter of replacing the stub fetch in `circleClient.createTransfer()` with
-real API calls and adding EIP-712 BurnIntent signing for the Gateway cross-chain path.
-
-**USYC note**: ArcFlow also supports USYC (Hashnote tokenized US Treasury yield token,
-available on Arc at `usyc.dev.hashnote.com`). Holders can Subscribe to convert testnet
-USDC → USYC and Redeem to convert back. USYC is a valid source token in `ArcFlowPayoutRouter`;
-Circle's cross-chain settlement routes use USDC/EURC as the transfer asset.
-
-**Communication**
-
-- Outbound HTTP from backend/worker to Circle.
-- Inbound HTTP from Circle to `POST /webhook/circle`.
+**USYC note:** `ArcFlowPayoutRouter` accepts USYC (Hashnote tokenised US Treasury yield token, available on Arc at `usyc.dev.hashnote.com`) as a source token. Circle's cross-chain routes use USDC/EURC as the settlement asset.
 
 ---
 
 ## Data Flow
 
-### Escrow Creation & Lifecycle
+### Escrow Lifecycle
 
-1. User opens the Escrow tab in the UI and fills in payee, amount, expiry, and arbitrator.
-2. UI constructs a transaction to `ArcFlowEscrow.createEscrow` using the connected wallet.
-3. ArcFlowEscrow:
-   - Pulls `amount` of `token` from the payer (requires prior `approve`).
-   - Stores escrow data and emits `EscrowCreated`.
-4. UI fetches escrow details via `escrows(id)` and renders current status.
-5. If a dispute arises, payer/payee calls `raiseDispute`.
-6. Arbitrator calls `resolveDispute` to release to payee or refund payer.
-7. If no dispute and expiry has passed, anyone can call `autoRelease` to release funds to payee.
+```mermaid
+flowchart TD
+  A["User fills Create Escrow form"] --> B["UI sends ERC-20 approve tx"]
+  B --> C["UI calls createEscrow(payee, token, amount, expiry, arbitrator)"]
+  C --> D["ArcFlowEscrow locks funds, emits EscrowCreated"]
+  D --> E{Time or action?}
+  E -->|"Dispute raised"| F["raiseDispute() — status: DISPUTED"]
+  F --> G["Arbitrator calls resolveDispute()"]
+  G -->|"Pay payee"| H["Funds released to payee"]
+  G -->|"Refund payer"| I["Funds refunded to payer"]
+  E -->|"Expiry passed, no dispute"| J["Anyone calls autoRelease()"]
+  J --> H
+```
 
-This flow is entirely on‑chain; the backend is not involved.
-
----
-
-### Vesting Stream Creation & Lifecycle
-
-1. Employer opens the Payroll/Vesting tab and configures employee, amount, and time parameters.
-2. UI calls `ArcFlowStreams.createStream` via the employer’s wallet.
-3. ArcFlowStreams:
-   - Pulls `totalAmount` from employer (requires prior `approve`).
-   - Stores stream data and emits `StreamCreated`.
-4. Employee, using their wallet, calls `getWithdrawable(id)` via the UI to see the vested amount.
-5. Employee calls `withdraw(id)` to claim vested funds.
-6. Employer can call `revoke(id)`:
-   - Contract computes vested vs unvested.
-   - Sends vested remainder to employee and refunds unvested to employer.
-   - Emits `Revoked`.
-
-Again, this flow is fully on‑chain and does not depend on backend services.
+This flow is entirely on-chain; the backend is not involved. The UI reads escrow state directly from the contract.
 
 ---
 
 ### Payout Batch Creation & Status Flow
 
-#### Mermaid Sequence Diagram
-
 ```mermaid
 sequenceDiagram
-  participant U as User (Wallet & UI)
-  participant C as ArcFlowPayoutRouter (Contract)
-  participant W as Worker (Event Listener)
-  participant B as Backend API
-  participant F as Frontend UI
+  participant U  as User (Wallet + UI)
+  participant C  as ArcFlowPayoutRouter
+  participant W  as Event Worker
+  participant S  as In-Memory Store
+  participant B  as Backend API
+  participant F  as Frontend (polling)
+  participant Ci as Circle (production)
 
-  U->>C: createBatchPayout(token, recipients[], amounts[], destinationChains[])
-  C-->>U: tx receipt & batchId
-  C-->>W: emit PayoutInstruction events
-  W->>B: update in-memory payouts[batchId] with QUEUED records
-  F->>B: GET /payouts/:batchId/status
-  B-->>F: JSON status (QUEUED/COMPLETED/FAILED per recipient)
+  U->>C: approve(PayoutRouter, totalAmount)
+  U->>C: createBatchPayout(token, recipients, amounts, chains)
+  C-->>U: receipt + batchId
+  C-->>W: emit PayoutInstruction × N
+  loop For each PayoutInstruction
+    W->>Ci: createTransfer(idempotencyKey, amount, chain)
+    W->>S: write PayoutStatus{QUEUED}
+  end
+  F->>B: GET /payouts/:batchId/status (every 30s)
+  B-->>F: JSON { payouts: [...] }
+  Ci-->>B: POST /webhook/circle (status update, production)
+  B->>S: update status → COMPLETED / FAILED
 ```
 
-**Flow description**
-
-1. User defines one or more recipients in the UI and submits a batch payout.
-2. UI calls `createBatchPayout` on `ArcFlowPayoutRouter` using the wallet:
-   - Contract validates inputs.
-   - Transfers the total amount from the creator to itself.
-   - Emits `BatchCreated` and one `PayoutInstruction` per recipient.
-3. Worker subscribes to `PayoutInstruction` events:
-   - For each event, it appends a `PayoutRecord` to `payouts[batchId]` with status `QUEUED`.
-4. UI periodically calls `GET /payouts/:batchId/status` on the backend:
-   - Backend returns the current list of payouts and statuses.
-5. In a future version:
-   - Worker would initiate payouts via Circle APIs and update statuses based on responses/webhooks.
+The user submits a batch transaction; the contract emits one event per recipient. The worker processes events independently of the frontend. The frontend polls the backend API for status without re-querying the chain.
 
 ---
 
-## Data Model (High‑Level)
+## Data Model (High-Level)
 
-This section describes high‑level entities; actual contract storage and JSON structures may differ.
+### On-Chain Entities
 
-### On‑chain Entities
+```
+Escrow
+  id            uint256        Auto-incremented
+  payer         address
+  payee         address
+  token         address        USDC or EURC contract
+  amount        uint256        Token units (6 decimals for USDC/EURC)
+  expiry        uint256        Unix timestamp
+  arbitrator    address        Zero if not set
+  disputed      bool
+  released      bool
+  refunded      bool
 
-- **Escrow**
-  - `id: uint256`
-  - `payer: address`
-  - `payee: address`
-  - `token: address`
-  - `amount: uint256`
-  - `expiry: uint256`
-  - `arbitrator: address`
-  - `disputed: bool`
-  - `released: bool`
-  - `refunded: bool`
+Stream
+  id            uint256
+  employer      address
+  employee      address
+  token         address
+  totalAmount   uint256
+  start         uint256        Vesting start timestamp
+  cliff         uint256        Cliff timestamp (no withdrawal before this)
+  end           uint256        Full vest timestamp
+  withdrawn     uint256        Cumulative withdrawn
 
-- **Stream**
-  - `id: uint256`
-  - `employer: address`
-  - `employee: address`
-  - `token: address`
-  - `totalAmount: uint256`
-  - `start: uint256`
-  - `cliff: uint256`
-  - `end: uint256`
-  - `withdrawn: uint256`
+Batch
+  id            uint256
+  creator       address
+  token         address
+  totalAmount   uint256
+  createdAt     uint256
+  ↳ PayoutInstruction events (one per recipient, not stored in struct)
+```
 
-- **Batch**
-  - `id: uint256`
-  - `creator: address`
-  - `token: address`
-  - `totalAmount: uint256`
-  - `createdAt: uint256`
+### Off-Chain Entities (In-Memory)
 
-### Off‑chain Entities
+```
+PayoutStatus
+  batchId           string
+  index             number
+  recipient         string     EVM address
+  amount            string     Human-readable (e.g. "100.000000")
+  destinationChain  string     Circle chain name (e.g. "BASE-SEPOLIA")
+  status            enum       QUEUED | COMPLETED | FAILED
+  circleTransferId  string?    Set after Circle accepts the transfer
+  createdAt         string     ISO 8601
+  updatedAt         string     ISO 8601
+```
 
-- **PayoutRecord**
-  - `batchId: string`
-  - `index: number`
-  - `recipient: string`
-  - `amount: string` (raw integer, e.g. 1e6 for 1.0 USDC)
-  - `destinationChain: string` (label from event)
-  - `status: "QUEUED" | "COMPLETED" | "FAILED"`
+### Session-Persistent Entities (localStorage)
 
-Relationships:
+```
+MyEscrow   { id, payee, amount, token, createdAt }
+MyStream   { id, employee, amount, token, createdAt }
+MyBatch    { id, recipients, total, token, createdAt }
+```
 
-- An `Escrow` links a payer and payee for a specific token amount.
-- A `Stream` links an employer and employee for a vested amount of a token.
-- A `Batch` is associated with multiple `PayoutRecord` entries off‑chain, each representing a single recipient in a multi‑recipient payout.
+Stored under keys `arcflow_my_escrows`, `arcflow_my_streams`, `arcflow_my_batches`. These are UI-only; they do not reflect on-chain state.
 
 ---
 
 ## Infrastructure & Deployment
 
-For the MVP, the system is designed to run in a simple, developer‑friendly setup. A production deployment can adapt this to managed infrastructure.
+### MVP (Local / Hackathon)
 
-### Deployment Approach
+```
+[localhost:5173]  Vite dev server — React SPA
+[localhost:3000]  Node/Express API + Event Worker (same process via dev:server)
+[Arc Testnet]     Public RPC endpoint — no local node required
+```
 
-- **Contracts:** Deployed via Hardhat to Arc testnet (and later mainnet).
-- **Backend:** Node/Express server and worker, typically run as:
-  - Two Node processes (API server, event worker), or
-  - Two containers orchestrated by Docker Compose or a similar tool.
-- **Frontend:** React/Vite SPA served via:
-  - Vite dev server for development.
-  - Static files on a CDN / static hosting service in production.
+Both backend processes can run in a single Node process (`npm run dev:server`) which starts the Express server and attaches the worker, or as separate processes (`dev:server` + `dev:worker`) for isolation.
+
+### Production (Recommended Path)
+
+```
+┌────────────────────────────────────────────────────────┐
+│  CDN / Static Host  (e.g. Vercel, Cloudflare Pages)    │
+│  └─ React SPA (dist/)                                  │
+└────────────────────────────────────────────────────────┘
+        │ HTTPS                         │ HTTPS
+        ▼                               ▼
+┌─────────────────────┐     ┌─────────────────────────┐
+│  API Server         │     │  Event Worker            │
+│  Node + Express     │◄────│  Node + ethers           │
+│  (horizontally      │     │  (single instance,       │
+│   scalable)         │     │   restartable)           │
+└─────────┬───────────┘     └──────────┬──────────────┘
+          │                            │
+          ▼                            ▼
+┌──────────────────────────────────────────────────────┐
+│  PostgreSQL / Redis (replaces in-memory store)       │
+└──────────────────────────────────────────────────────┘
+          │                            │
+          ▼                            ▼
+┌──────────────────┐       ┌─────────────────────────┐
+│  Arc Mainnet     │       │  Circle Wallets/Gateway  │
+└──────────────────┘       └─────────────────────────┘
+```
 
 ### Environments
 
-- **Development:**
-  - Local Node processes.
-  - Arc testnet RPC endpoint.
-  - Hot‑reloading for frontend and backend.
-- **Staging / Test (optional):**
-  - Same as development but with hosted API and UI.
-  - Dedicated Arc testnet contracts.
-- **Production:**
-  - Hosted static frontend.
-  - Hosted backend API and worker processes.
-  - Contracts deployed to Arc mainnet (once ready).
-
-Configuration is managed via environment variables in each component.
+| Environment | Contracts | Backend | Frontend | Circle |
+|---|---|---|---|---|
+| **Development** | Arc Testnet | `localhost:3000` | `localhost:5173` | Stub |
+| **Staging** | Arc Testnet | Hosted (e.g. Railway) | Hosted | Testnet credentials |
+| **Production** | Arc Mainnet | Hosted (scaled) | CDN | Mainnet credentials |
 
 ---
 
@@ -451,21 +440,17 @@ Configuration is managed via environment variables in each component.
 
 ### Scalability
 
-- **Smart Contracts:**
-  - Scale with Arc’s throughput and gas model. Designed to be minimal and stateless in execution (data stored on chain).
-- **Backend:**
-  - Stateless API server except for in‑memory payout store in MVP.
-  - Can be scaled horizontally with a centralised store (e.g. database or cache) replacing in‑memory structures.
-- **Frontend:**
-  - Static assets; trivially scalable via CDNs.
+- **Contracts:** Scale with Arc's throughput. Stateless execution; all state on-chain.
+- **Backend API:** Stateless except for in-memory payout store. Horizontal scaling is straightforward once the store is moved to a shared database.
+- **Worker:** Intended as a single-instance process per deployment (event ordering must be preserved). Can be made redundant with leader election.
+- **Frontend:** Static assets; trivially scaled via CDN.
 
 ### Reliability
 
-- **Event‑driven payouts:**
-  - Payout tracking is driven by on‑chain events; the worker can be restarted and resynchronised if a persistent store is used.
-- **Failure modes:**
-  - If the backend goes down, on‑chain operations continue to function; only payout status tracking is affected.
-  - If the worker is down, new payout events are not captured until it restarts; historical events could be replayed if necessary (future improvement).
+- **On-chain operations are unaffected by backend downtime.** Users can continue creating escrows, streams, and batches even if the backend is unavailable.
+- **Worker recovery:** Because `PayoutInstruction` events are permanently on Arc, a restarted worker can replay events from a historical block and reconstruct payout state. This requires a persistent store (future improvement).
+- **Idempotency keys** (`arcflow_{batchId}-{index}_{txHash}`) prevent duplicate Circle transfers if the worker processes the same event twice.
+- **Payout status polling** in the frontend uses a 30-second interval with an explicit "Refresh" button, providing predictable load on the backend.
 
 ---
 
@@ -473,23 +458,33 @@ Configuration is managed via environment variables in each component.
 
 ### Smart Contract Security
 
-- Use of Solidity 0.8.x with built‑in overflow checks.
-- Explicit validation of critical inputs (non‑zero addresses, non‑zero amounts, array length checks).
-- Simple control flows without complex external calls, reducing reentrancy risk.
-- Fee logic centralised in `_payout` helper for escrow.
+- Solidity 0.8.x built-in arithmetic overflow protection.
+- Explicit validation: non-zero addresses, non-zero amounts, array-length equality checks.
+- No external calls within `createEscrow` or `createStream` (only `safeTransferFrom`/`safeTransfer` via OpenZeppelin).
+- Protocol fee centralised in a single `_payout` helper to avoid duplication.
+- Tests cover edge cases: zero address, zero amount, wrong caller, double-action reverts.
 
 ### Backend & API Security
 
-- No user authentication in MVP (intended for demo and testnet use).
-- In production:
-  - API should be protected with authentication and authorisation (e.g. API keys, OAuth2).
-  - Rate limiting and input validation should be added.
-- Secrets (RPC URLs, private keys, Circle API keys) stored in environment variables; in production, use a proper secrets manager.
+- No authentication or rate limiting in MVP (demo/testnet scope).
+- Production hardening required:
+  - API key or OAuth2 authentication on all endpoints.
+  - Rate limiting (e.g. express-rate-limit).
+  - Input validation and sanitisation.
+  - HTTPS-only with HSTS.
+- Secrets (`ARC_PRIVATE_KEY`, `CIRCLE_API_KEY`, `CIRCLE_ENTITY_SECRET`) stored in environment variables. Production deployments should use a secrets manager (e.g. AWS Secrets Manager, Vault).
 
-### Compliance & Data Protection
+### Frontend Security
 
-- The system primarily processes blockchain addresses and payout metadata; there is no explicit PII in the MVP.
-- For production use, any PII or sensitive metadata must be stored and handled in line with applicable regulations (e.g. GDPR), and Circle integration may impose additional compliance constraints.
+- No private keys handled in the browser; all signing is delegated to MetaMask.
+- 2-step inline confirmation required for Raise Dispute and Revoke Stream (destructive, irreversible actions).
+- No sensitive data stored in `localStorage` beyond item IDs and metadata.
+
+### Compliance
+
+- The MVP stores only blockchain addresses and payout metadata; no explicit PII.
+- Production deployments may need to address AML/KYC obligations (depending on jurisdiction) and Circle's compliance requirements for developer-controlled wallets.
+- GDPR considerations apply if user metadata is ever collected or persisted server-side.
 
 ---
 
@@ -497,72 +492,54 @@ Configuration is managed via environment variables in each component.
 
 ### Logging
 
-- Backend logs:
-  - API requests (optionally).
-  - Event listener activity (PayoutInstruction events).
-  - Errors and exceptions.
-- For production, logs should be centralised and aggregated.
+- **Backend and Worker:** Winston 3.x structured logging (JSON in production, colourised in development).
+- Log levels: `error`, `warn`, `info`, `debug` (configured via `LOG_LEVEL` env var).
+- Log outputs:
+  - Console (development): colourised, human-readable.
+  - `combined.log`: all levels in JSON.
+  - `error.log`: errors only in JSON.
+- Logged events: API requests, `PayoutInstruction` processing, Circle call results, errors.
 
 ### Metrics
 
-- Potential metrics:
-  - Number of escrows created (from events).
-  - Number of active streams.
-  - Number of payout batches and payouts by status.
-- Not implemented in MVP, but the architecture supports adding metrics collection without major changes.
+Not implemented in the MVP. The following metrics are recommended for production:
+
+- Payout batch count and status distribution (QUEUED / COMPLETED / FAILED).
+- Event processing latency (block event timestamp → backend write).
+- API request rate and error rate per endpoint.
+- Circle API call success/failure rate.
 
 ### Tracing
 
-- Not implemented in MVP.
-- A production system could use distributed tracing tools to monitor calls from UI → backend → Circle.
+Not implemented in the MVP. In production, distributed tracing (e.g. OpenTelemetry → Jaeger / Datadog) would cover the path: frontend → backend API → Circle API.
 
 ---
 
-## Trade‑offs & Design Decisions
+## Trade-offs & Design Decisions
 
-- **Arc as a single hub:**  
-  The system assumes Arc as the primary hub for all treasury state and execution, simplifying cross‑chain concerns. Trade‑off: requires bridging in/out for other ecosystems, handled via Circle rather than direct multi‑chain contracts.
-
-- **Event‑driven payouts vs on‑chain execution:**  
-  Batch payouts are not settled fully on‑chain; instead, events instruct an off‑chain worker. This makes integration with Circle and traditional finance tooling easier but introduces off‑chain components that must be secured and monitored.
-
-- **In‑memory payout store in MVP:**  
-  Chosen for simplicity and hackathon speed. Trade‑off: no persistence across restarts; not suitable for production.
-
-- **No on‑chain indexing for dashboard:**  
-  The dashboard relies on client‑side reads and simple tracking of IDs rather than a full indexing solution. This keeps the stack lean but limits analytics depth.
+| Decision | Choice made | Trade-off |
+|---|---|---|
+| **Settlement model** | Off-chain event-driven via Circle (not fully on-chain) | Enables Circle integration and multi-chain routing; introduces backend dependency for payout tracking |
+| **Payout store** | In-memory for MVP | Simple and fast to build; no persistence across restarts; not production-ready |
+| **Frontend data reads** | Direct from Arc via wallet (`eth_call`) | No indexer or subgraph needed; limits historical query capability |
+| **Session state** | `localStorage` for My-list views | Survives refresh; not synced across devices or wallet changes |
+| **Worker deployment** | Co-located with API server in MVP | Reduces ops complexity; single-instance limit must be addressed before scaling |
+| **Circle routing** | Same-chain → Wallets API; cross-chain → Gateway/CCTP | Matches `arc-multichain-wallet` reference exactly; future-proof for mainnet with minimal changes |
+| **Arc as primary hub** | All treasury state on Arc | Simplifies cross-chain concerns; users bridge in/out via Circle rather than managing liquidity |
 
 ---
 
 ## Future Improvements
 
-- **Persistent Storage for Payouts:**
-  - Replace in‑memory `payouts` map with a persistent data store (e.g. PostgreSQL, Redis, or a document database).
-  - Enable replays and robust recovery.
+- **Persistent payout store** — Replace the in-memory map with PostgreSQL or Redis; enable event replay and crash recovery.
+- **Live Circle integration** — Replace stub in `circleClient.createTransfer()` with real HTTP calls and EIP-712 `BurnIntent` signing for cross-chain transfers.
+- **Circle webhook handler** — Implement `POST /webhook/circle` to receive real-time status updates from Circle and push `COMPLETED` / `FAILED` states to the store.
+- **On-chain indexer** — Use a lightweight indexer (e.g. Ponder, The Graph, or a custom block scanner) to power the Dashboard with real historical data.
+- **Network mismatch detection** — Detect when the user's wallet is on the wrong chain and prompt an auto-switch to Arc Testnet / Mainnet.
+- **Role-based access** — Introduce an organisational model mapping wallet addresses to admin / operator / read-only roles.
+- **Policy engine** — Server-side rules for minimum batch sizes, approval workflows, and scheduled payouts.
+- **Expanded token support** — Integrate USYC (Hashnote) for yield-bearing treasury reserves; extend UI with yield and FX views.
+- **Formal contract audit** — Security review of all three contracts before any mainnet deployment.
+- **Observability stack** — Add structured metrics, distributed tracing, and alerting for failed payouts.
 
-- **Circle Integration:**
-  - Implement actual payout calls via Circle Wallets and Gateway.
-  - Store Circle transaction IDs and map them to `PayoutRecord`s.
-  - Use Circle webhooks to update statuses.
-
-- **Policy Engine:**
-  - Add server‑side rules for minimum batch size, scheduling, and approval flows.
-  - Integrate agent logic to automatically trigger or delay batches based on treasury conditions.
-
-- **Role‑based Access:**
-  - Introduce an organisational model with admins, finance operators, and read‑only roles.
-  - Map roles to wallets or account systems.
-
-- **Enhanced Observability:**
-  - Add structured logging, metrics, and dashboards.
-  - Implement basic alerting for failed payouts or high error rates.
-
-- **Expanded Token Support and FX:**
-  - Integrate USYC and StableFX to manage yield and FX‑aware payouts.
-  - Extend UI to show reserves, yields, and FX breakdowns.
-
-- **Security Hardening:**
-  - Formal audits of smart contracts.
-  - Hardened API with authentication, rate limiting, and penetration testing.
-
-These improvements can be layered on top of the current architecture without substantial redesign, reflecting the system’s goal of being both practical today and extensible for production‑grade deployments.
+These improvements can be layered on top of the current architecture without substantial redesign, reflecting the system's goal of being both practical today and extensible for production-grade deployments.

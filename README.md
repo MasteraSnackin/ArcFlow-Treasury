@@ -42,7 +42,7 @@ The system runs on **Arc**, a Layer-1 blockchain built by Circle for stablecoin-
 
 - **On-chain Escrow** — Lock USDC/EURC with configurable expiry, optional arbitrator, and automatic release. Either party can raise a dispute; the arbitrator resolves it on-chain.
 - **Payroll & Vesting Streams** — Employer-funded linear vesting with a cliff period. Employees withdraw at any time; employers can revoke with an automatic pro-rata split.
-- **Batch Payouts** — Create multi-recipient payout batches in a single transaction. Each recipient specifies a destination chain label (Arc, Base, Polygon, etc.).
+- **Batch Payouts** — Create multi-recipient payout batches in a single transaction. Each recipient specifies a destination chain (ARC, BASE, AVAX, ETH, ARB) aligned to Circle's supported chain set.
 - **Treasury Dashboard** — Real-time overview of USDC locked in escrows, locked in streams, and held in pending payout batches.
 - **Backend Event Worker** — Subscribes to on-chain `PayoutInstruction` events and routes them to Circle's payout infrastructure (stub wired for production integration).
 - **REST Status API** — Query payout batch and per-recipient status at any time without re-querying the chain.
@@ -67,7 +67,8 @@ The system runs on **Arc**, a Layer-1 blockchain built by Circle for stablecoin-
 | Icons | lucide-react |
 | Notifications | react-hot-toast |
 | Network | Arc EVM Testnet — Chain ID `5042002` |
-| Future | Circle Wallets / Gateway / CCTP |
+| Circle (stub) | [`@circle-fin/developer-controlled-wallets`](https://github.com/circlefin/developer-controlled-wallets-sample-app) — Wallets API + Gateway / CCTP |
+| Circle reference | [`circlefin/arc-multichain-wallet`](https://github.com/circlefin/arc-multichain-wallet) — chain names, domain IDs, and dual-endpoint routing |
 
 ---
 
@@ -92,13 +93,28 @@ flowchart LR
   UI -->|"GET /payouts/:id/status"| API
   Router -->|"emit PayoutInstruction"| Arc
   Worker -->|"subscribe to events"| Arc
-  Worker -->|"createPayoutInstruction"| Circle
+  Worker -->|"createTransfer"| Circle
   Worker -->|"write status"| Store
   API -->|"read"| Store
   Circle -.->|"cross-chain settlement\n(production)"| Arc
 ```
 
 The **frontend** connects directly to Arc EVM via the user's injected wallet for all transaction signing and contract reads. The **backend worker** independently listens for `PayoutInstruction` events emitted by `ArcFlowPayoutRouter`, decodes each recipient's chain and amount, and calls the Circle API stub to initiate off-chain settlement. The **REST API** surfaces the worker's stored payout status so the frontend can poll without re-querying the chain.
+
+### Circle integration alignment
+
+The Circle client (`arcflow-backend/src/services/circleClient.ts`) is modelled directly on [`circlefin/arc-multichain-wallet`](https://github.com/circlefin/arc-multichain-wallet):
+
+| What | Value adopted from arc-multichain-wallet |
+|---|---|
+| Chain identifiers | `ARC-TESTNET`, `BASE-SEPOLIA`, `AVAX-FUJI`, `ETH-SEPOLIA`, `ARB-SEPOLIA` |
+| CCTP domain IDs | ARC-TESTNET=5, BASE-SEPOLIA=6, AVAX-FUJI=1, ETH-SEPOLIA=0, ARB-SEPOLIA=3 |
+| Same-chain endpoint | Circle Wallets API — `api.circle.com/v1/transfers` |
+| Cross-chain endpoint | Circle Gateway API — `gateway-api-testnet.circle.com/v1/transfer` |
+| SDK | `@circle-fin/developer-controlled-wallets` (initialized with `apiKey` + `entitySecret`) |
+| Method name | `createTransfer()` (maps to `circleClient.createTransfer` in the reference app) |
+
+The current implementation is a **stub** — it logs the correct endpoint and returns a fake transfer ID. Switching to live payouts requires real credentials and replacing the stub body with actual HTTP calls + EIP-712 `BurnIntent` signing for the cross-chain path (see `arc-multichain-wallet/lib/circle/gateway-sdk.ts → transferGatewayBalanceWithEOA`).
 
 ---
 
@@ -283,7 +299,7 @@ curl http://localhost:3000/payouts/1/status
       "amount": "2500.00",
       "destinationChain": "BASE",
       "status": "COMPLETED",
-      "circlePayoutId": "circle_payout_1234_5678"
+      "circleTransferId": "circle_transfer_1234_5678"
     }
   ]
 }
@@ -321,7 +337,7 @@ cd arcflow-backend
 npm test
 ```
 
-Covers Circle client stub, chain identifier mapping (`ARC → ETH`, `BASE`, `POLYGON`), PayoutInstruction event encoding/decoding, and Express route responses using Vitest.
+Covers Circle client stub (`createTransfer`, `getTransferStatus`), chain identifier mapping (`ARC → ARC-TESTNET`, `BASE → BASE-SEPOLIA`, `AVAX → AVAX-FUJI`, `ETH → ETH-SEPOLIA`, `ARB → ARB-SEPOLIA`), CCTP domain ID lookups, PayoutInstruction event encoding/decoding, and Express route responses using Vitest.
 
 ### Type checking (all packages)
 
@@ -341,8 +357,8 @@ cd arcflow-frontend && npx tsc --noEmit
 ## Roadmap
 
 - [ ] Wire frontend to real contract calls via ethers.js (replace mock data)
-- [ ] "My Escrows / My Streams" list views — query by connected wallet address
-- [ ] Connect Circle Wallets / Gateway for real cross-chain payout routing
+- [x] My Escrows / My Streams / My Batches list views — localStorage-persisted, click-to-load
+- [ ] Connect Circle Wallets / Gateway for real cross-chain payout routing (replace stub in `circleClient.createTransfer()`)
 - [ ] Persist payout state to a database (replace in-memory store)
 - [ ] Network mismatch detection — warn and prompt auto-switch to Arc Testnet
 - [ ] Historical obligation charts on the dashboard

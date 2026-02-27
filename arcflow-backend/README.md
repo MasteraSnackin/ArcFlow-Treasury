@@ -148,7 +148,7 @@ GET /payouts/:batchId/status
       "amount": "100.000000",
       "destinationChain": "BASE",
       "status": "QUEUED",
-      "circlePayoutId": "circle_payout_123...",
+      "circleTransferId": "circle_transfer_123...",
       "createdAt": "2025-02-27T10:00:00.000Z",
       "updatedAt": "2025-02-27T10:00:00.000Z"
     }

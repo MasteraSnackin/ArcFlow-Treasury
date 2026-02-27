@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import {
   ShieldCheck,
   GitBranch,
@@ -356,9 +357,9 @@ export default function Dashboard() {
                   color: "#06b6d4",
                 },
               ].map(({ label, href, icon: Icon, color }) => (
-                <a
+                <Link
                   key={label}
-                  href={href}
+                  to={href}
                   style={{
                     display: "flex",
                     alignItems: "center",
@@ -405,7 +406,7 @@ export default function Dashboard() {
                     {label}
                   </span>
                   <ExternalLink size={13} color="rgba(255,255,255,0.25)" />
-                </a>
+                </Link>
               ))}
             </div>
           </div>

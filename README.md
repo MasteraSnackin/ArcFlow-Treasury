@@ -3,7 +3,8 @@
 > Stablecoin treasury operations — escrow, payroll streams, and batch payouts on Arc.
 
 ![Build](https://img.shields.io/badge/build-passing-brightgreen)
-![Tests](https://img.shields.io/badge/tests-43%20passing-brightgreen)
+![Contract Tests](https://img.shields.io/badge/contract%20tests-31%20passing-brightgreen)
+![Backend Tests](https://img.shields.io/badge/backend%20tests-12%20passing-brightgreen)
 ![Solidity](https://img.shields.io/badge/solidity-0.8.20-blue)
 ![Network](https://img.shields.io/badge/network-Arc%20Testnet-purple)
 ![License](https://img.shields.io/badge/license-MIT-blue)
@@ -14,7 +15,7 @@
 
 ArcFlow Treasury is an Arc-native web application that gives finance and operations teams a single interface for stablecoin treasury workflows. It replaces fragmented spreadsheets, manual wallet operations, and ad-hoc escrow agreements with fully on-chain, auditable primitives — conditional escrows with dispute resolution, linear vesting streams with cliff support, and multi-recipient batch payouts — all denominated in USDC or EURC.
 
-The system runs on **Arc**, a Layer-1 blockchain built by Circle for stablecoin-native finance. Arc provides sub-second finality, USDC-denominated gas, and predictable fees. For cross-chain settlement, the architecture is designed to route through **Circle Wallets**, **Circle Gateway**, and **CCTP** so users never manage bridging or liquidity themselves.
+The system runs on **Arc**, a Layer-1 blockchain built by Circle for stablecoin-native finance. Arc provides sub-second finality, USDC-denominated gas, and predictable fees. For cross-chain settlement, the architecture routes through **Circle Wallets**, **Circle Gateway**, and **CCTP** so users never manage bridging or liquidity themselves.
 
 **Target users:** Crypto-native companies and technical founders who pay contractors, run payroll, and execute bulk transfers in stablecoins.
 
@@ -42,11 +43,12 @@ The system runs on **Arc**, a Layer-1 blockchain built by Circle for stablecoin-
 
 - **On-chain Escrow** — Lock USDC/EURC with configurable expiry, optional arbitrator, and automatic release. Either party can raise a dispute; the arbitrator resolves it on-chain.
 - **Payroll & Vesting Streams** — Employer-funded linear vesting with a cliff period. Employees withdraw at any time; employers can revoke with an automatic pro-rata split.
-- **Batch Payouts** — Create multi-recipient payout batches in a single transaction. Each recipient specifies a destination chain (ARC, BASE, AVAX, ETH, ARB) aligned to Circle's supported chain set.
-- **Treasury Dashboard** — Real-time overview of USDC locked in escrows, locked in streams, and held in pending payout batches.
+- **Batch Payouts** — Create multi-recipient payout batches in a single transaction. Each recipient specifies a destination chain (`ARC`, `BASE`, `AVAX`, `ETH`, `ARB`) aligned to Circle's supported chain set.
+- **My Escrows / Streams / Batches** — localStorage-persisted list views on each page. Created items appear instantly and survive page refresh; click any item to auto-load it.
+- **Treasury Dashboard** — Real-time overview of USDC locked in escrows, streams, and pending payout batches, with Quick Actions and Recent Activity.
 - **Backend Event Worker** — Subscribes to on-chain `PayoutInstruction` events and routes them to Circle's payout infrastructure (stub wired for production integration).
 - **REST Status API** — Query payout batch and per-recipient status at any time without re-querying the chain.
-- **MetaMask Integration** — One-click wallet connect with Arc Testnet chain detection.
+- **MetaMask Integration** — One-click wallet connect with Arc Testnet chain detection and live API health indicator.
 - **Glassmorphism UI** — Dark dashboard with skeleton loading, consistent empty/error/success states, and toast notifications throughout.
 
 ---
@@ -67,7 +69,7 @@ The system runs on **Arc**, a Layer-1 blockchain built by Circle for stablecoin-
 | Icons | lucide-react |
 | Notifications | react-hot-toast |
 | Network | Arc EVM Testnet — Chain ID `5042002` |
-| Circle (stub) | [`@circle-fin/developer-controlled-wallets`](https://github.com/circlefin/developer-controlled-wallets-sample-app) — Wallets API + Gateway / CCTP |
+| Circle SDK (stub) | [`@circle-fin/developer-controlled-wallets`](https://github.com/circlefin/developer-controlled-wallets-sample-app) — Wallets API + Gateway / CCTP |
 | Circle reference | [`circlefin/arc-multichain-wallet`](https://github.com/circlefin/arc-multichain-wallet) — chain names, domain IDs, and dual-endpoint routing |
 
 ---
@@ -124,13 +126,13 @@ The current implementation is a **stub** — it logs the correct endpoint and re
 
 - **Node.js** 18 or later (`node --version`)
 - **npm** 9 or later
-- A wallet private key funded on Arc Testnet (get testnet USDC/EURC from [faucet.circle.com](https://faucet.circle.com/) — select **Arc Testnet**)
+- A wallet funded on Arc Testnet (get testnet USDC/EURC from [faucet.circle.com](https://faucet.circle.com/) — select **Arc Testnet**)
 
 ### 1. Clone the repository
 
 ```bash
-git clone <YOUR_REPO_URL>
-cd arcflow-treasury
+git clone https://github.com/MasteraSnackin/ArcFlow-Treasury.git
+cd ArcFlow-Treasury
 ```
 
 ### 2. Install contract dependencies (root)
@@ -154,10 +156,9 @@ cd arcflow-frontend && npm install && cd ..
 ### 5. Configure environment variables
 
 ```bash
-cp .env.example .env   # then edit .env with your values
+cp .env.example .env
+# Edit .env with your values — see Configuration section
 ```
-
-See [Configuration](#configuration) for all required variables.
 
 ### 6. Verify your setup
 
@@ -188,7 +189,8 @@ The deploy script prints the addresses of `ArcFlowEscrow`, `ArcFlowStreams`, and
 cd arcflow-backend
 npm run dev:server
 
-# Terminal 2 — Payout event worker
+# Terminal 2 — Payout event worker (optional, for batch payout tracking)
+cd arcflow-backend
 npm run dev:worker
 ```
 
@@ -206,7 +208,15 @@ npm run dev
 2. Navigate to **Escrow & Disputes**.
 3. Click **New Escrow** → fill in payee address, token (USDC/EURC), amount, expiry hours, and optional arbitrator.
 4. Approve the ERC-20 spend when prompted, then confirm the `createEscrow` transaction.
-5. Copy the returned **Escrow ID** and use the lookup form to monitor status and trigger actions (raise dispute, auto-release, arbitrator resolve).
+5. The new escrow appears instantly in the **My Escrows** panel. Click it to auto-load details.
+6. Use the lookup panel to raise disputes, auto-release after expiry, or resolve as arbitrator.
+
+### End-to-end example: create a batch payout
+
+1. Navigate to **Payout Batches** → click **New Batch Payout**.
+2. Select token (USDC/EURC), add recipient rows (address, amount, destination chain).
+3. Confirm the `createBatchPayout` transaction.
+4. The batch appears in the **My Batches** panel. Click it to fetch live Circle payout status from the backend API.
 
 ---
 
@@ -223,7 +233,8 @@ All configuration is via environment variables in the **root `.env`** file.
 | `ARCFLOW_ESCROW_ADDRESS` | After deploy | Deployed `ArcFlowEscrow` address |
 | `ARCFLOW_STREAMS_ADDRESS` | After deploy | Deployed `ArcFlowStreams` address |
 | `ARCFLOW_PAYOUT_ROUTER_ADDRESS` | After deploy | Deployed `ArcFlowPayoutRouter` address |
-| `CIRCLE_API_KEY` | Optional | Circle API key for production payout routing |
+| `CIRCLE_API_KEY` | Optional | Circle API key (production payout routing) |
+| `CIRCLE_ENTITY_SECRET` | Optional | Circle entity secret (production payout routing) |
 | `PORT` | Optional | Backend API port (default: `3000`) |
 
 **Example `.env`:**
@@ -245,12 +256,10 @@ ARC_FEE_BPS=0
 
 | View | Description |
 |---|---|
-| **Dashboard** | 4-metric bento grid — USDC locked in escrow, locked in streams, pending batches, total obligations |
-| **Escrow & Disputes** | Lookup by ID, 2-step dispute confirmation, arbitrator resolve (pay payee / refund payer) |
-| **Payroll & Vesting** | Vesting progress bar, cliff/end timeline, withdraw and revoke with status badges |
-| **Payout Batches** | Dynamic recipient grid with per-recipient destination chain, batch status table with Circle payout IDs |
-
-Replace placeholders with actual screenshots once captured:
+| **Dashboard** | 4-metric bento grid — USDC locked in escrow, locked in streams, pending batches, total obligations + Quick Actions |
+| **Escrow & Disputes** | My Escrows list, lookup by ID, 2-step dispute confirmation, arbitrator resolve |
+| **Payroll & Vesting** | My Streams list, vesting progress bar, cliff/end timeline, withdraw and 2-step revoke |
+| **Payout Batches** | My Batches list, dynamic recipient grid with per-chain destination, batch status table with Circle transfer IDs |
 
 ```markdown
 ![Dashboard](./docs/screenshots/dashboard.png)
@@ -267,7 +276,7 @@ Base URL: `http://localhost:3000`
 
 ### `GET /status`
 
-Returns backend and worker health.
+Returns backend health.
 
 ```bash
 curl http://localhost:3000/status
@@ -337,7 +346,7 @@ cd arcflow-backend
 npm test
 ```
 
-Covers Circle client stub (`createTransfer`, `getTransferStatus`), chain identifier mapping (`ARC → ARC-TESTNET`, `BASE → BASE-SEPOLIA`, `AVAX → AVAX-FUJI`, `ETH → ETH-SEPOLIA`, `ARB → ARB-SEPOLIA`), CCTP domain ID lookups, PayoutInstruction event encoding/decoding, and Express route responses using Vitest.
+Covers Circle client stub (`createTransfer`, `getTransferStatus`), chain identifier mapping (`ARC → ARC-TESTNET`, `BASE → BASE-SEPOLIA`, `AVAX → AVAX-FUJI`, `ETH → ETH-SEPOLIA`, `ARB → ARB-SEPOLIA`), CCTP domain ID lookups, `PayoutInstruction` event encoding/decoding, and Express route responses using Vitest.
 
 ### Type checking (all packages)
 
@@ -396,9 +405,9 @@ This project is licensed under the **MIT License**. See the [`LICENSE`](./LICENS
 
 | | |
 |---|---|
-| **Issues / Bugs** | Open an issue on GitHub |
+| **Issues / Bugs** | [Open an issue on GitHub](https://github.com/MasteraSnackin/ArcFlow-Treasury/issues) |
+| **Repository** | [github.com/MasteraSnackin/ArcFlow-Treasury](https://github.com/MasteraSnackin/ArcFlow-Treasury) |
 | **Maintainer** | `<ADD MAINTAINER NAME>` |
-| **GitHub** | `<ADD GITHUB PROFILE URL>` |
 | **Email** | `<ADD CONTACT EMAIL>` |
 
 > Built for the Arc + Circle hackathon.

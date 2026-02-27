@@ -1,0 +1,30 @@
+{
+  "name": "arcflow-backend",
+  "version": "1.0.0",
+  "description": "ArcFlow Treasury backend worker and API",
+  "private": true,
+  "main": "dist/index.js",
+  "scripts": {
+    "dev:server": "tsx watch src/server.ts",
+    "dev:worker": "tsx watch src/workers/payoutWorker.ts",
+    "build": "tsc",
+    "start:server": "node dist/server.js",
+    "start:worker": "node dist/workers/payoutWorker.js",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@circle-fin/developer-controlled-wallets": "^10.0.1",
+    "dotenv": "^16.4.0",
+    "ethers": "^6.13.0",
+    "express": "^4.19.0",
+    "winston": "^3.11.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.11.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.6.0",
+    "vitest": "^1.2.0"
+  }
+}

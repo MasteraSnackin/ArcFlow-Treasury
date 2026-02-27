@@ -1,0 +1,64 @@
+# Environment Variables
+.env
+.env.local
+.env.*.local
+
+# Dependencies
+node_modules/
+arcflow-backend/node_modules/
+
+# Build outputs
+dist/
+build/
+arcflow-backend/dist/
+
+# Hardhat
+artifacts/
+cache/
+typechain-types/
+
+# Logs
+*.log
+logs/
+arcflow-backend/*.log
+arcflow-backend/logs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Testing
+coverage/
+.nyc_output/
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Package manager
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Hardhat specific
+.openzeppelin/
+deployments/
+
+# TypeScript
+*.tsbuildinfo
+
+# Misc
+.secret
+*.bak
+
+# Claude Code local settings (machine-specific, not for version control)
+.claude/

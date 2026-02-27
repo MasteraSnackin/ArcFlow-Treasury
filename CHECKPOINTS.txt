@@ -1,0 +1,8 @@
+Project Name
+ArcFlow Treasury
+
+Description (Optional)
+ArcFlow Treasury is an Arc‑native web application that lets businesses manage stablecoin treasury operations from a single interface, including escrow, vesting streams, and multi‑recipient USDC/EURC payouts, with Arc as the primary execution hub.
+
+Project Image (Optional)
+Use a simple banner that visually conveys “stablecoin treasury console on Arc”. For now you can use a placeholder like:

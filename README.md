@@ -9,6 +9,10 @@
 ![Network](https://img.shields.io/badge/network-Arc%20Testnet-purple)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
+## Demo
+
+[![ArcFlow Treasury Demo](https://img.youtube.com/vi/lGjtkMIWWsA/0.jpg)](https://youtu.be/lGjtkMIWWsA)
+
 ---
 
 ## Description

@@ -1,4 +1,7 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import * as fs from "fs";
+import * as os from "os";
+import * as path from "path";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { PayoutStore } from "../src/stores/payoutStore";
 import { PayoutStatus } from "../src/types";
 
@@ -178,5 +181,149 @@ describe("PayoutStore", () => {
 
     const result5 = store.getBatch("5");
     expect(result5.every((p) => p.batchId === "5")).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// File persistence — constructor(filePath?) feature
+// ---------------------------------------------------------------------------
+
+describe("PayoutStore — file persistence", () => {
+  let tmpFile: string;
+
+  beforeEach(() => {
+    // Unique temp file per test so parallel runs don't collide.
+    tmpFile = path.join(
+      os.tmpdir(),
+      `arcflow_payoutstore_${Date.now()}_${Math.random().toString(36).slice(2)}.json`
+    );
+  });
+
+  afterEach(() => {
+    // Remove temp file even if the test failed.
+    try { fs.unlinkSync(tmpFile); } catch { /* already absent — that's fine */ }
+  });
+
+  // Helper: wait long enough for the 200 ms debounce + async writeFile to land.
+  const waitForSave = () => new Promise<void>((r) => setTimeout(r, 350));
+
+  // ── startup behaviour ────────────────────────────────────────────────────
+
+  it("starts empty when the file does not exist (ENOENT — first run)", () => {
+    // tmpFile hasn't been created yet — constructor must not throw.
+    const store = new PayoutStore(tmpFile);
+    expect(store.getBatch("1")).toHaveLength(0);
+    expect(store.get("1", 0)).toBeUndefined();
+    expect(store.has("1", 0)).toBe(false);
+  });
+
+  // ── round-trip persistence ───────────────────────────────────────────────
+
+  it("persists a payout to disk and reloads it in a new store instance", async () => {
+    const store = new PayoutStore(tmpFile);
+    store.set("1", 0, makeStatus());
+
+    await waitForSave();
+
+    // New store loading from the same file must have the data.
+    const store2 = new PayoutStore(tmpFile);
+    expect(store2.has("1", 0)).toBe(true);
+    expect(store2.get("1", 0)?.status).toBe("QUEUED");
+    expect(store2.get("1", 0)?.recipient).toBe("0xRecipient");
+  });
+
+  it("deserializes createdAt and updatedAt as Date objects after reload", async () => {
+    const iso = "2026-01-15T12:00:00.000Z";
+    const store = new PayoutStore(tmpFile);
+    store.set("1", 0, makeStatus({
+      createdAt: new Date(iso),
+      updatedAt: new Date(iso),
+    }));
+
+    await waitForSave();
+
+    const store2 = new PayoutStore(tmpFile);
+    const loaded = store2.get("1", 0)!;
+    expect(loaded.createdAt).toBeInstanceOf(Date);
+    expect(loaded.updatedAt).toBeInstanceOf(Date);
+    expect(loaded.createdAt.toISOString()).toBe(iso);
+    expect(loaded.updatedAt.toISOString()).toBe(iso);
+  });
+
+  // ── secondary-index rebuild on load ─────────────────────────────────────
+
+  it("rebuilds batchIndex so getBatch() returns correct results after reload", async () => {
+    const store = new PayoutStore(tmpFile);
+    store.set("2", 0, makeStatus({ batchId: "2", index: 0 }));
+    store.set("2", 1, makeStatus({ batchId: "2", index: 1 }));
+    store.set("3", 0, makeStatus({ batchId: "3", index: 0 }));
+
+    await waitForSave();
+
+    const store2 = new PayoutStore(tmpFile);
+    expect(store2.getBatch("2")).toHaveLength(2);
+    expect(store2.getBatch("3")).toHaveLength(1);
+    expect(store2.getBatch("99")).toHaveLength(0); // unknown batch → empty
+  });
+
+  it("rebuilds transferIndex so updateByCircleTransferId() works after reload", async () => {
+    const store = new PayoutStore(tmpFile);
+    store.set("1", 0, makeStatus({ circleTransferId: "ct_reload" }));
+
+    await waitForSave();
+
+    const store2 = new PayoutStore(tmpFile);
+    const updated = store2.updateByCircleTransferId("ct_reload", "COMPLETED");
+    expect(updated).toBe(true);
+    expect(store2.get("1", 0)?.status).toBe("COMPLETED");
+  });
+
+  // ── persistence of status updates ───────────────────────────────────────
+
+  it("persists status changes made via updateByCircleTransferId()", async () => {
+    const store = new PayoutStore(tmpFile);
+    store.set("1", 0, makeStatus({ circleTransferId: "ct_upd_persist" }));
+    await waitForSave();
+
+    store.updateByCircleTransferId("ct_upd_persist", "COMPLETED");
+    await waitForSave();
+
+    const store2 = new PayoutStore(tmpFile);
+    expect(store2.get("1", 0)?.status).toBe("COMPLETED");
+  });
+
+  // ── debounce coalescing ──────────────────────────────────────────────────
+
+  it("multiple rapid set() calls coalesce into a single file write with final state", async () => {
+    const store = new PayoutStore(tmpFile);
+
+    // 5 mutations fired within the same JS event-loop tick — all within the debounce window.
+    for (let i = 0; i < 5; i++) {
+      store.set("1", i, makeStatus({ batchId: "1", index: i, circleTransferId: `ct_${i}` }));
+    }
+
+    await waitForSave();
+
+    const raw = fs.readFileSync(tmpFile, "utf-8");
+    const entries = JSON.parse(raw) as [string, unknown][];
+
+    // All 5 payouts must be present in the single written snapshot.
+    expect(entries).toHaveLength(5);
+
+    // Reloading reflects the final state correctly.
+    const store2 = new PayoutStore(tmpFile);
+    expect(store2.getBatch("1")).toHaveLength(5);
+  });
+
+  // ── no-filePath store does not write to disk ─────────────────────────────
+
+  it("a store without a filePath never creates a file on set()", async () => {
+    const store = new PayoutStore(); // no filePath
+    store.set("1", 0, makeStatus());
+
+    await waitForSave();
+
+    // tmpFile was never used — it should not exist.
+    expect(fs.existsSync(tmpFile)).toBe(false);
   });
 });

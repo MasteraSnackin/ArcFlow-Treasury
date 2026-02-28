@@ -408,8 +408,8 @@ app.get("/streams/:id", (req: Request, res: Response) => {
  */
 const startServer = async () => {
   try {
-    // Initialize and start worker
-    worker = new PayoutWorker();
+    // Initialize and start worker (optional file persistence via PAYOUT_STORE_PATH)
+    worker = new PayoutWorker({ filePath: process.env.PAYOUT_STORE_PATH });
     await worker.start();
 
     // Start Express server

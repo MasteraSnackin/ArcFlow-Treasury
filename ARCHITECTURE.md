@@ -49,7 +49,7 @@ flowchart LR
   Worker["Event Worker\nNode + ethers.js"]
   Arc["Arc EVM Testnet\nChain ID 5042002"]
   Contracts["Smart Contracts\nEscrow · Streams · PayoutRouter"]
-  Store["In-Memory Store\nPayoutStatus"]
+  Store["PayoutStore\nIn-memory · optional\nJSON file via env"]
   Circle["Circle\nWallets / Gateway / CCTP"]
 
   User -->|"signs tx"| UI
@@ -217,9 +217,11 @@ PayoutStatus {
 }
 ```
 
-**In-memory store: `PayoutStore`**
+**Payout store: `PayoutStore`**
 
-The payout store (`src/stores/payoutStore.ts`) is a class wrapping three Maps with two secondary indexes:
+The payout store (`src/stores/payoutStore.ts`) supports optional JSON file persistence via an optional `filePath` constructor argument (set via `PAYOUT_STORE_PATH` env var). The constructor loads existing data synchronously at startup and rebuilds all secondary indexes; subsequent mutations schedule a 200 ms debounced async `writeFile`. Without a `filePath` the store is purely in-memory (default).
+
+The store wraps three Maps with two secondary indexes:
 
 | Structure | Key | Value | Purpose |
 |---|---|---|---|
@@ -284,11 +286,12 @@ This is 1.67× faster than 5 separate `filter`/`reduce` passes and exact for tot
 - **Cross-chain payouts:** Circle Gateway API (`gateway-api-testnet.circle.com/v1/transfer`) with CCTP burn-attest-mint — used when chains differ.
 - **Status updates:** Circle posts real-time callbacks to `POST /webhooks/circle`, verified with HMAC-SHA256.
 
-**Current status:** The `circleClient.createTransfer()` method is a stub — it logs the correct endpoint and returns a fake `circleTransferId`. The structure exactly mirrors `circlefin/arc-multichain-wallet` (same SDK, same env variable names, same dual-endpoint routing, same CCTP domain IDs), so switching to live payouts requires only:
+**Current status:** Same-chain payouts are **live** when `CIRCLE_API_KEY` is set — `circleClient.createTransfer()` calls the Circle Wallets API (`api.circle.com/v1/w3s/wallets/{walletId}/transfers`) with real HTTP, using `CIRCLE_WALLET_ID` as the source wallet. Cross-chain payouts (non-ARC destinations) still stub and log a warn; completing them requires:
 
-1. Set real `CIRCLE_API_KEY` and `CIRCLE_ENTITY_SECRET`.
-2. Replace stub body in `circleClient.createTransfer()` with real `fetch` calls.
-3. For cross-chain: add EIP-712 `BurnIntent` signing (reference: `arc-multichain-wallet/lib/circle/gateway-sdk.ts → transferGatewayBalanceWithEOA`).
+1. EIP-712 `BurnIntent` signing (reference: `arc-multichain-wallet/lib/circle/gateway-sdk.ts → transferGatewayBalanceWithEOA`).
+2. CCTP attestation polling before the mint on the destination chain.
+
+Without `CIRCLE_API_KEY` the client operates in stub mode (logged, returns a fake ID) — the safe default for local development.
 
 The `POST /webhooks/circle` webhook handler is **already implemented** — it verifies the `x-circle-signature` HMAC-SHA256 header, maps Circle statuses (`pending → PROCESSING`, `complete → COMPLETED`, `failed → FAILED`), and updates `PayoutStore` via `updateByCircleTransferId()`.
 
@@ -548,7 +551,7 @@ Not implemented in the MVP. In production, distributed tracing (e.g. OpenTelemet
 | Decision | Choice made | Trade-off |
 |---|---|---|
 | **Settlement model** | Off-chain event-driven via Circle (not fully on-chain) | Enables Circle integration and multi-chain routing; introduces backend dependency for payout tracking |
-| **Payout store** | In-memory for MVP | Simple and fast to build; no persistence across restarts; not production-ready |
+| **Payout store** | In-memory with optional JSON file persistence (`PAYOUT_STORE_PATH`) | File mode survives restarts and replays indexes on load; database (Postgres/Redis) is the next step for horizontal scaling |
 | **Frontend data reads** | Direct from Arc via wallet (`eth_call`) | No indexer or subgraph needed; limits historical query capability |
 | **Session state** | `localStorage` for My-list views | Survives refresh; not synced across devices or wallet changes |
 | **Worker deployment** | Co-located with API server in MVP | Reduces ops complexity; single-instance limit must be addressed before scaling |
@@ -561,16 +564,15 @@ Not implemented in the MVP. In production, distributed tracing (e.g. OpenTelemet
 
 ## Future Improvements
 
-- **Persistent payout store** — Replace the in-memory `PayoutStore` with PostgreSQL or Redis; enable event replay and crash recovery across restarts.
-- **Live Circle integration** — Replace stub body in `circleClient.createTransfer()` with real HTTP calls. Cross-chain path requires EIP-712 `BurnIntent` signing (reference: `arc-multichain-wallet/lib/circle/gateway-sdk.ts → transferGatewayBalanceWithEOA`).
-- **On-chain indexer** — Use a lightweight indexer (e.g. Ponder, The Graph, or a custom block scanner) to power the Dashboard with real historical data per connected wallet.
-- **Wired frontend contract calls** — Replace mock escrow/stream data in the frontend with live `ethers.js` contract reads and `ContractFactory` deployments.
+- **Database-backed payout store** — Replace JSON file persistence with PostgreSQL or Redis for horizontal scaling, atomic updates, and richer querying. The `PayoutStore` interface is unchanged; only the storage driver needs swapping.
+- **Circle cross-chain live routing** — Complete the BurnIntent/CCTP path in `circleClient.createTransfer()` for non-ARC destinations. Same-chain routing is already live when `CIRCLE_API_KEY` is set.
+- **On-chain indexer** — Use a lightweight indexer (e.g. Ponder, The Graph, or a custom block scanner) to power the backend `/escrows/:id` and `/streams/:id` endpoints with real contract data (currently stubs).
 - **Role-based access** — Introduce an organisational model mapping wallet addresses to admin / operator / read-only roles.
 - **Policy engine** — Server-side rules for minimum batch sizes, approval workflows, and scheduled payouts.
 - **Expanded token support** — Integrate USYC (Hashnote) for yield-bearing treasury reserves; extend UI with yield and FX views.
 - **Formal contract audit** — Security review of all three contracts before any mainnet deployment.
 - **Observability stack** — Add structured metrics, distributed tracing (OpenTelemetry), and alerting for failed payouts.
 
-> Items already implemented: network mismatch detection (Layout.tsx chain-ID check with auto-switch prompt); Circle webhook handler (`POST /webhooks/circle` with HMAC verification); `PayoutStore` secondary indexes; single-pass batch arithmetic.
+> Items already implemented: network mismatch detection (Layout.tsx chain-ID check with auto-switch prompt); Circle webhook handler (`POST /webhooks/circle` with HMAC verification); `PayoutStore` secondary indexes; single-pass batch arithmetic; **real frontend contract calls** (`contracts.ts` with `approveIfNeeded`, event-ID parsing, EscrowPage/PayrollPage/PayoutsPage all wired); **live Circle same-chain routing** (gated on `CIRCLE_API_KEY`); **JSON file persistence** for `PayoutStore` (gated on `PAYOUT_STORE_PATH`).
 
 These improvements can be layered on top of the current architecture without substantial redesign, reflecting the system's goal of being both practical today and extensible for production-grade deployments.

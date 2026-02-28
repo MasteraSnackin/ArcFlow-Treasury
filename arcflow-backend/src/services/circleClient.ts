@@ -74,58 +74,122 @@ class CircleClient {
    * Creates a USDC/EURC transfer with Circle.
    *
    * Same-chain (destination == ARC-TESTNET):
-   *   Production: POST {walletsBaseUrl}/transfers
+   *   POST {walletsBaseUrl}/wallets/{walletId}/transfers
    *   Auth header: Authorization: Bearer {apiKey}
    *
    * Cross-chain (any other destination):
-   *   Production: sign an EIP-712 BurnIntent, POST {gatewayBaseUrl}/transfer,
+   *   TODO: sign an EIP-712 BurnIntent, POST {gatewayBaseUrl}/transfer,
    *   poll GET {gatewayBaseUrl}/transfers/{id} until attestation is ready,
    *   then call executeMint() on the destination chain.
    *   Full reference: arc-multichain-wallet/lib/circle/gateway-sdk.ts
+   *   Currently falls through to stub mode until CCTP signing is implemented.
+   *
+   * When CIRCLE_API_KEY is not set, runs in stub mode (safe for local dev).
    *
    * @param request The transfer request (see CircleTransferRequest)
-   * @returns A stub CircleTransferResponse with status "pending"
+   * @returns CircleTransferResponse with the real or stub transfer ID
    */
   async createTransfer(
     request: CircleTransferRequest
   ): Promise<CircleTransferResponse> {
     const isCrossChain = request.destination.chain !== "ARC-TESTNET";
-    const endpoint = isCrossChain
-      ? `${this.gatewayBaseUrl}/transfer`  // Gateway: burn-attest-mint
-      : `${this.walletsBaseUrl}/transfers`; // Wallets: direct on-chain send
 
-    logger.info("Circle API (STUB): Creating transfer", {
+    // -----------------------------------------------------------------------
+    // Stub mode — no credentials configured.
+    // -----------------------------------------------------------------------
+    if (!this.apiKey) {
+      const stubId = `circle_transfer_${Date.now()}_${Math.random()
+        .toString(36)
+        .substring(7)}`;
+      logger.info("Circle API (STUB): Creating transfer", {
+        idempotencyKey: request.idempotencyKey,
+        amount: request.amount.amount,
+        currency: request.amount.currency,
+        destinationChain: request.destination.chain,
+        destinationAddress: request.destination.address,
+        isCrossChain,
+      });
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      const response: CircleTransferResponse = {
+        id: stubId,
+        status: "pending",
+        amount: request.amount,
+        destination: request.destination,
+        createDate: new Date().toISOString(),
+      };
+      logger.info("Circle API (STUB): Transfer created", { transferId: stubId });
+      return response;
+    }
+
+    // -----------------------------------------------------------------------
+    // Live mode — CIRCLE_API_KEY is set.
+    // -----------------------------------------------------------------------
+    const walletId = process.env.CIRCLE_WALLET_ID;
+    if (!walletId) {
+      throw new Error("CIRCLE_WALLET_ID must be set when CIRCLE_API_KEY is configured.");
+    }
+
+    if (isCrossChain) {
+      // Cross-chain requires BurnIntent EIP-712 signing + CCTP attestation polling.
+      // TODO: implement full Gateway cross-chain flow from arc-multichain-wallet.
+      // For now, log clearly and fall back to stub to avoid silent failures.
+      logger.warn("Circle Gateway cross-chain flow not yet implemented — using stub for cross-chain transfer", {
+        destinationChain: request.destination.chain,
+        idempotencyKey: request.idempotencyKey,
+      });
+      const stubId = `circle_xchain_stub_${Date.now()}`;
+      return {
+        id: stubId,
+        status: "pending",
+        amount: request.amount,
+        destination: request.destination,
+        createDate: new Date().toISOString(),
+      };
+    }
+
+    // Same-chain: Circle Wallets API POST /v1/w3s/wallets/{walletId}/transfers
+    const endpoint = `${this.walletsBaseUrl}/wallets/${walletId}/transfers`;
+    logger.info("Circle API (LIVE): Creating same-chain transfer", {
+      endpoint,
       idempotencyKey: request.idempotencyKey,
       amount: request.amount.amount,
-      currency: request.amount.currency,
-      destinationChain: request.destination.chain,
       destinationAddress: request.destination.address,
-      destinationDomain: request.destinationDomain,
-      isCrossChain,
-      endpoint,
     });
 
-    // Simulate network round-trip
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    const res = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${this.apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        idempotencyKey: request.idempotencyKey,
+        destinationAddress: request.destination.address,
+        amounts: [request.amount.amount],
+        assetId: request.destination.address, // token contract address on Arc
+      }),
+    });
 
-    const stubTransferId = `circle_transfer_${Date.now()}_${Math.random()
-      .toString(36)
-      .substring(7)}`;
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(`Circle API ${res.status}: ${body}`);
+    }
 
-    const response: CircleTransferResponse = {
-      id: stubTransferId,
-      status: "pending",
+    const json = await res.json() as { data: { transfer: { id: string; status: string } } };
+    const transfer = json.data.transfer;
+
+    logger.info("Circle API (LIVE): Transfer created", {
+      transferId: transfer.id,
+      status: transfer.status,
+    });
+
+    return {
+      id: transfer.id,
+      status: transfer.status as CircleTransferResponse["status"],
       amount: request.amount,
       destination: request.destination,
       createDate: new Date().toISOString(),
     };
-
-    logger.info("Circle API (STUB): Transfer created", {
-      transferId: stubTransferId,
-      status: response.status,
-    });
-
-    return response;
   }
 
   /**

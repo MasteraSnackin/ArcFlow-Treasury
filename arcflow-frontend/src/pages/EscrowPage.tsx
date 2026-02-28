@@ -13,6 +13,14 @@ import {
 import Modal from "../components/Modal";
 import EmptyState from "../components/EmptyState";
 import { SkeletonLine } from "../components/Skeleton";
+import {
+  getEscrowContract,
+  approveIfNeeded,
+  TOKEN_ADDRESSES,
+  parseToken,
+  formatToken,
+  ZeroAddress,
+} from "../lib/contracts";
 
 type EscrowStatus = "OPEN" | "DISPUTED" | "RELEASED" | "REFUNDED";
 
@@ -28,17 +36,6 @@ type Escrow = {
   disputed: boolean;
 };
 
-const MOCK_ESCROW: Escrow = {
-  id: "0",
-  payer: "0x1234\u20265678",
-  payee: "0xabcd\u2026ef01",
-  token: "USDC",
-  amount: "2400.00",
-  expiry: Date.now() / 1000 + 7200,
-  arbitrator: "0x9999\u20260000",
-  status: "OPEN",
-  disputed: false,
-};
 
 type MyEscrow = { id: string; payee: string; amount: string; token: string; createdAt: string };
 
@@ -76,6 +73,7 @@ export default function EscrowPage() {
     arbitrator: "",
   });
   const [creating, setCreating] = useState(false);
+  const [createStatus, setCreateStatus] = useState("");
   const [lookupId, setLookupId] = useState("");
   const [loading, setLoading] = useState(false);
   const [escrow, setEscrow] = useState<Escrow | null>(null);
@@ -98,10 +96,46 @@ export default function EscrowPage() {
       return;
     }
     setCreating(true);
+    setCreateStatus("");
     try {
-      await new Promise((r) => setTimeout(r, 1500));
+      const tokenAddr = TOKEN_ADDRESSES[formData.token];
+      const escrowContract = await getEscrowContract();
+      const escrowAddr = import.meta.env.VITE_ARC_ESCROW_ADDRESS as string;
+      const amountBigInt = parseToken(formData.amount);
+      const expiryTimestamp = Math.floor(Date.now() / 1000) + Number(formData.expiryHours) * 3600;
+      const arbitrator = formData.arbitrator || ZeroAddress;
+
+      await approveIfNeeded(tokenAddr, escrowAddr, amountBigInt, setCreateStatus);
+
+      setCreateStatus("Sending transaction…");
+      const tx = await escrowContract.createEscrow(
+        formData.payee,
+        tokenAddr,
+        amountBigInt,
+        BigInt(expiryTimestamp),
+        arbitrator
+      );
+      setCreateStatus("Waiting for confirmation…");
+      const receipt = await tx.wait();
+
+      // Parse EscrowCreated event to get the real on-chain escrow ID.
+      let newId = String(myEscrows.length);
+      if (receipt) {
+        for (const log of receipt.logs) {
+          try {
+            const parsed = escrowContract.interface.parseLog({
+              topics: [...log.topics],
+              data: log.data,
+            });
+            if (parsed?.name === "EscrowCreated") {
+              newId = parsed.args[0].toString();
+              break;
+            }
+          } catch { /* not this event */ }
+        }
+      }
+
       setShowCreateModal(false);
-      const newId = String(myEscrows.length);
       const newItem: MyEscrow = {
         id: newId,
         payee: formData.payee,
@@ -113,10 +147,19 @@ export default function EscrowPage() {
       setMyEscrows(updatedEscrows);
       localStorage.setItem("arcflow_my_escrows", JSON.stringify(updatedEscrows));
       toast.success(`Escrow #${newId} created!`);
-    } catch {
-      toast.error("Failed to create escrow. Please try again.");
+      doLookup(newId);
+    } catch (err: unknown) {
+      const code = (err as { code?: number }).code;
+      if (code !== 4001) {
+        const msg =
+          (err as { shortMessage?: string }).shortMessage ??
+          (err as { message?: string }).message ??
+          "Failed to create escrow.";
+        toast.error(msg);
+      }
     } finally {
       setCreating(false);
+      setCreateStatus("");
     }
   };
 
@@ -127,14 +170,28 @@ export default function EscrowPage() {
     setNotFound(false);
     setConfirmDispute(false);
     try {
-      await new Promise((r) => setTimeout(r, 800));
-      if (id === "0") {
-        setEscrow(MOCK_ESCROW);
-      } else {
-        setNotFound(true);
-      }
+      const res = await fetch(`http://localhost:3000/escrows/${id}`);
+      if (res.status === 404) { setNotFound(true); return; }
+      if (!res.ok) throw new Error(`Server error ${res.status}`);
+      const data = await res.json() as {
+        id: string; payer: string; payee: string; token: string;
+        amount: string; expiry: number; arbitrator: string; status: string;
+      };
+      const short = (addr: string) =>
+        addr ? `${addr.slice(0, 6)}\u2026${addr.slice(-4)}` : "";
+      setEscrow({
+        id: data.id,
+        payer: short(data.payer),
+        payee: short(data.payee),
+        token: data.token,
+        amount: formatToken(parseToken(parseFloat(data.amount).toFixed(6))),
+        expiry: data.expiry,
+        arbitrator: short(data.arbitrator),
+        status: data.status as EscrowStatus,
+        disputed: data.status === "DISPUTED",
+      });
     } catch {
-      toast.error("Lookup failed. Please try again.");
+      toast.error("Lookup failed. Is the backend running?");
       setNotFound(true);
     } finally {
       setLoading(false);
@@ -144,24 +201,33 @@ export default function EscrowPage() {
   const handleLookup = (e: React.FormEvent) => { e.preventDefault(); doLookup(lookupId); };
 
   const doAction = async (action: string) => {
+    if (!escrow) return;
     setActionLoading(action);
     try {
-      await new Promise((r) => setTimeout(r, 1200));
-      if (action === "dispute") {
-        setEscrow((e) => (e ? { ...e, status: "DISPUTED", disputed: true } : e));
-        toast.success("Dispute raised on Escrow #" + escrow?.id);
-      } else if (action === "release") {
-        setEscrow((e) => (e ? { ...e, status: "RELEASED" } : e));
-        toast.success("Escrow #" + escrow?.id + " auto-released to payee.");
-      } else if (action === "resolve-payee") {
-        setEscrow((e) => (e ? { ...e, status: "RELEASED" } : e));
-        toast.success("Dispute resolved — paid to payee.");
-      } else if (action === "resolve-payer") {
-        setEscrow((e) => (e ? { ...e, status: "REFUNDED" } : e));
-        toast.success("Dispute resolved — refunded to payer.");
+      const id = BigInt(escrow.id);
+      const contract = await getEscrowContract();
+      const tx =
+        action === "dispute"        ? await contract.raiseDispute(id)         :
+        action === "release"        ? await contract.autoRelease(id)          :
+        action === "resolve-payee"  ? await contract.resolveDispute(id, true)  :
+        action === "resolve-payer"  ? await contract.resolveDispute(id, false) :
+        null;
+      if (!tx) return;
+      await tx.wait();
+      await doLookup(escrow.id);
+      if (action === "dispute")       toast.success("Dispute raised on Escrow #" + escrow.id);
+      else if (action === "release")  toast.success("Escrow #" + escrow.id + " auto-released to payee.");
+      else if (action === "resolve-payee") toast.success("Dispute resolved — paid to payee.");
+      else if (action === "resolve-payer") toast.success("Dispute resolved — refunded to payer.");
+    } catch (err: unknown) {
+      const code = (err as { code?: number }).code;
+      if (code !== 4001) {
+        const msg =
+          (err as { shortMessage?: string }).shortMessage ??
+          (err as { message?: string }).message ??
+          "Action failed.";
+        toast.error(msg);
       }
-    } catch {
-      toast.error("Action failed. Please try again.");
     } finally {
       setActionLoading(null);
     }
@@ -798,6 +864,11 @@ export default function EscrowPage() {
               style={{ width: "100%" }}
             />
           </div>
+          {createStatus && (
+            <div style={{ fontSize: 12, color: "rgba(165,180,252,0.8)", marginTop: 2 }}>
+              {createStatus}
+            </div>
+          )}
           <div
             style={{
               display: "flex",

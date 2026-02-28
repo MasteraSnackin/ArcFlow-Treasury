@@ -10,6 +10,7 @@
 # 1. Install dependencies
 npm install
 cd arcflow-backend && npm install && cd ..
+cd arcflow-frontend && npm install && cd ..
 
 # 2. Verify setup
 npm run verify-setup
@@ -30,7 +31,17 @@ ARC_FEE_BPS=100
 ```bash
 cd arcflow-backend
 cp .env.example .env
-# Edit with your values
+# Edit with your values (ARC_TESTNET_RPC_URL, ARC_PAYOUT_ROUTER_ADDRESS, etc.)
+# Optional: set CIRCLE_API_KEY + CIRCLE_WALLET_ID for live Circle routing
+# Optional: set PAYOUT_STORE_PATH=./data/payouts.json for persistence across restarts
+```
+
+### Frontend `.env` (after deployment)
+```bash
+cd arcflow-frontend
+cp .env.example .env
+# Fill VITE_ARC_ESCROW_ADDRESS, VITE_ARC_STREAMS_ADDRESS, VITE_ARC_PAYOUT_ROUTER_ADDRESS
+# Fill VITE_USDC_ADDRESS, VITE_EURC_ADDRESS
 ```
 
 ---
@@ -41,8 +52,11 @@ cp .env.example .env
 # Contract tests (31 tests)
 npm test
 
-# Backend tests (12 tests)
+# Backend tests (61 tests — 4 files)
 cd arcflow-backend && npm test
+
+# Frontend type check (0 errors)
+cd arcflow-frontend && npx tsc --noEmit
 ```
 
 ---
@@ -112,18 +126,25 @@ curl http://localhost:3000/payouts/0/status
 ## 📁 Project Structure
 
 ```
-├── contracts/          # Smart contracts (Escrow, Streams, Router)
-├── scripts/           # Deployment scripts
-├── test/              # Contract tests (31 passing)
-├── arcflow-backend/   # Backend worker + API
+├── contracts/              # Smart contracts (Escrow, Streams, Router)
+├── scripts/               # Deployment scripts
+├── test/                  # Contract tests (31 passing)
+├── arcflow-backend/       # Backend worker + API
 │   ├── src/
-│   │   ├── config/    # Arc provider, logger
-│   │   ├── services/  # Circle client stub
-│   │   ├── workers/   # Event listener
-│   │   └── server.ts  # REST API
-│   └── test/          # Backend tests (12 passing)
-├── .env               # Contract deployment config
-└── DEPLOYMENT_GUIDE.md # Full deployment docs
+│   │   ├── config/        # Arc provider, logger
+│   │   ├── services/      # Circle client (stub → live when CIRCLE_API_KEY set)
+│   │   ├── stores/        # PayoutStore (in-memory + optional JSON file)
+│   │   ├── workers/       # Event listener (PayoutWorker)
+│   │   └── server.ts      # REST API + HMAC webhook
+│   ├── data/              # Payout JSON snapshots (gitignored; needs PAYOUT_STORE_PATH)
+│   └── test/              # Backend tests (61 passing)
+├── arcflow-frontend/      # React SPA
+│   ├── src/
+│   │   ├── lib/contracts.ts  # ethers v6 helpers + approveIfNeeded
+│   │   └── pages/         # Dashboard, EscrowPage, PayrollPage, PayoutsPage
+│   └── .env.example       # VITE_ contract addresses
+├── .env                   # Contract deployment config
+└── DEPLOYMENT_GUIDE.md    # Full deployment docs
 ```
 
 ---
@@ -186,13 +207,15 @@ curl <YOUR_RPC_URL>
 
 ## ✅ Quick Checklist
 
-- [ ] Dependencies installed (`npm install` in both directories)
+- [ ] Dependencies installed (`npm install` in all three directories)
 - [ ] Setup verified (`npm run verify-setup` passes)
-- [ ] Tests passing (`npm test` - 31/31 contracts, 12/12 backend)
-- [ ] `.env` configured with RPC URL and private key
+- [ ] Tests passing (`npm test` — 31/31 contracts, 61/61 backend)
+- [ ] Root `.env` configured with RPC URL and private key
 - [ ] Contracts deployed (`npm run deploy:arc`)
+- [ ] Frontend `.env` filled with deployed contract addresses + token addresses
 - [ ] Backend `.env` configured with router address
 - [ ] Backend running (`npm run dev:server`)
+- [ ] Frontend running (`cd arcflow-frontend && npm run dev`)
 - [ ] Health check works (`curl http://localhost:3000/status`)
 
 ---
@@ -200,10 +223,10 @@ curl <YOUR_RPC_URL>
 ## 🎉 Success Criteria
 
 **You're ready when:**
-1. ✅ All 43 tests passing (31 contract + 12 backend)
-2. ✅ Contracts deployed to Arc testnet
-3. ✅ Backend server running and responsive
-4. ✅ Test batch payout processed successfully
+1. ✅ All 92 tests passing (31 contract + 61 backend)
+2. ✅ Contracts deployed to Arc testnet; addresses in frontend `.env`
+3. ✅ Backend server running and responsive (`curl http://localhost:3000/status`)
+4. ✅ Frontend running at `http://localhost:5173` — wallet connects, MetaMask prompts on create
 
 ---
 

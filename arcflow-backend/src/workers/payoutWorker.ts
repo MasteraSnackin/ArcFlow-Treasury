@@ -25,9 +25,9 @@ import PayoutRouterABI from "../abis/ArcFlowPayoutRouter.json";
 class PayoutWorker {
   private provider: ethers.JsonRpcProvider;
   private contract: ethers.Contract;
-  readonly store: PayoutStore = new PayoutStore();
+  readonly store: PayoutStore;
 
-  constructor() {
+  constructor(options?: { filePath?: string }) {
     const config = getArcConfig();
     this.provider = createArcProvider();
     this.contract = new ethers.Contract(
@@ -35,11 +35,13 @@ class PayoutWorker {
       PayoutRouterABI,
       this.provider
     );
+    this.store = new PayoutStore(options?.filePath);
 
     logger.info("PayoutWorker initialized", {
       rpcUrl: config.rpcUrl,
       chainId: config.chainId,
       contractAddress: config.payoutRouterAddress,
+      persistencePath: options?.filePath ?? "(none — in-memory only)",
     });
   }
 
@@ -241,7 +243,7 @@ class PayoutWorker {
 
 // Main execution
 if (require.main === module) {
-  const worker = new PayoutWorker();
+  const worker = new PayoutWorker({ filePath: process.env.PAYOUT_STORE_PATH });
 
   worker
     .start()

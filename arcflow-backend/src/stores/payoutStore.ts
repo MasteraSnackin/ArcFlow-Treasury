@@ -1,10 +1,11 @@
+import * as fs from "fs";
 import { PayoutStatus } from "../types";
 import { logger } from "../config/logger";
 
 /**
  * PayoutStore
  *
- * In-memory store for payout statuses.
+ * In-memory store for payout statuses with optional JSON file persistence.
  *
  * Primary key:  `${batchId}-${index}`
  * Secondary indexes maintained for O(1) / O(k) access patterns:
@@ -13,7 +14,10 @@ import { logger } from "../config/logger";
  *
  * Without the indexes both of those operations are O(n) across ALL stored payouts.
  *
- * Replace with a Redis or database adapter for production persistence.
+ * Pass a `filePath` to the constructor to enable persistence. The store loads
+ * existing data synchronously at startup and writes debounced JSON snapshots
+ * (200 ms) after every mutation. No new npm dependencies required — uses
+ * Node's built-in `fs` module.
  */
 export class PayoutStore {
   private readonly payouts: Map<string, PayoutStatus> = new Map();
@@ -21,6 +25,70 @@ export class PayoutStore {
   private readonly batchIndex: Map<string, Set<string>> = new Map();
   /** circleTransferId → composite key (one-to-one because IDs are unique). */
   private readonly transferIndex: Map<string, string> = new Map();
+  /** Optional path to persist store as a JSON file. */
+  private readonly filePath: string | undefined;
+  /** Debounce timer handle for deferred file writes. */
+  private saveTimer: ReturnType<typeof setTimeout> | undefined;
+
+  constructor(filePath?: string) {
+    this.filePath = filePath;
+    if (filePath) {
+      this.loadFromFile(filePath);
+    }
+  }
+
+  /** Load persisted entries from disk at startup (synchronous for simplicity). */
+  private loadFromFile(filePath: string): void {
+    try {
+      const raw = fs.readFileSync(filePath, "utf-8");
+      const entries = JSON.parse(raw) as [string, PayoutStatus][];
+      for (const [k, record] of entries) {
+        // Deserialise Date fields (JSON.parse returns strings for Date values).
+        record.createdAt = new Date(record.createdAt);
+        record.updatedAt = new Date(record.updatedAt);
+
+        this.payouts.set(k, record);
+
+        // Rebuild secondary indexes.
+        const { batchId, circleTransferId } = record;
+        let batchKeys = this.batchIndex.get(batchId);
+        if (!batchKeys) {
+          batchKeys = new Set();
+          this.batchIndex.set(batchId, batchKeys);
+        }
+        batchKeys.add(k);
+        if (circleTransferId) {
+          this.transferIndex.set(circleTransferId, k);
+        }
+      }
+      logger.info(`PayoutStore: loaded ${entries.length} entries from ${filePath}`);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+        logger.warn("PayoutStore: could not load persistence file", { filePath, err });
+      }
+      // ENOENT = file doesn't exist yet — first run, start fresh.
+    }
+  }
+
+  /**
+   * Schedule a debounced write of the full store to disk.
+   * Multiple mutations within 200 ms coalesce into a single write.
+   */
+  private scheduleSave(): void {
+    if (!this.filePath) return;
+    clearTimeout(this.saveTimer);
+    this.saveTimer = setTimeout(() => {
+      const entries = [...this.payouts.entries()];
+      fs.promises
+        .writeFile(this.filePath!, JSON.stringify(entries, null, 2), "utf-8")
+        .then(() =>
+          logger.debug(`PayoutStore: persisted ${entries.length} entries to ${this.filePath}`)
+        )
+        .catch((e: unknown) =>
+          logger.error("PayoutStore: save failed", { filePath: this.filePath, error: e })
+        );
+    }, 200);
+  }
 
   private key(batchId: string, index: number): string {
     return `${batchId}-${index}`;
@@ -50,6 +118,8 @@ export class PayoutStore {
     if (status.circleTransferId) {
       this.transferIndex.set(status.circleTransferId, k);
     }
+
+    this.scheduleSave();
   }
 
   /** Retrieve a single payout, or undefined if not found. */
@@ -108,6 +178,7 @@ export class PayoutStore {
       status,
       payoutKey: k,
     });
+    this.scheduleSave();
     return true;
   }
 }

@@ -13,6 +13,13 @@ import {
 import Modal from "../components/Modal";
 import EmptyState from "../components/EmptyState";
 import { SkeletonLine } from "../components/Skeleton";
+import {
+  getStreamsContract,
+  approveIfNeeded,
+  TOKEN_ADDRESSES,
+  parseToken,
+  formatToken,
+} from "../lib/contracts";
 
 type Stream = {
   id: string;
@@ -29,20 +36,6 @@ type Stream = {
   revoked: boolean;
 };
 
-const MOCK_STREAM: Stream = {
-  id: "0",
-  employer: "0x1234\u20265678",
-  employee: "0xabcd\u2026ef01",
-  token: "USDC",
-  totalAmount: "18000.00",
-  start: Date.now() / 1000 - 86400 * 30,
-  cliff: Date.now() / 1000 - 86400 * 20,
-  end: Date.now() / 1000 + 86400 * 335,
-  withdrawn: "1500.00",
-  vested: "4500.00",
-  withdrawable: "3000.00",
-  revoked: false,
-};
 
 type MyStream = { id: string; employee: string; amount: string; token: string; createdAt: string };
 
@@ -91,6 +84,7 @@ export default function PayrollPage() {
     durationHours: "720",
   });
   const [creating, setCreating] = useState(false);
+  const [createStatus, setCreateStatus] = useState("");
   const [showModal, setShowModal] = useState(false);
   const [lookupId, setLookupId] = useState("");
   const [loading, setLoading] = useState(false);
@@ -113,10 +107,49 @@ export default function PayrollPage() {
       return;
     }
     setCreating(true);
+    setCreateStatus("");
     try {
-      await new Promise((r) => setTimeout(r, 1500));
+      const tokenAddr = TOKEN_ADDRESSES[formData.token];
+      const streamsContract = await getStreamsContract();
+      const streamsAddr = import.meta.env.VITE_ARC_STREAMS_ADDRESS as string;
+      const totalBigInt = parseToken(formData.totalAmount);
+      const now = Math.floor(Date.now() / 1000);
+      const start = now;
+      const cliff = now + Number(formData.cliffHours) * 3600;
+      const end = now + Number(formData.durationHours) * 3600;
+
+      await approveIfNeeded(tokenAddr, streamsAddr, totalBigInt, setCreateStatus);
+
+      setCreateStatus("Sending transaction…");
+      const tx = await streamsContract.createStream(
+        formData.employee,
+        tokenAddr,
+        totalBigInt,
+        BigInt(start),
+        BigInt(cliff),
+        BigInt(end)
+      );
+      setCreateStatus("Waiting for confirmation…");
+      const receipt = await tx.wait();
+
+      // Parse StreamCreated event to get the real on-chain stream ID.
+      let newId = String(myStreams.length);
+      if (receipt) {
+        for (const log of receipt.logs) {
+          try {
+            const parsed = streamsContract.interface.parseLog({
+              topics: [...log.topics],
+              data: log.data,
+            });
+            if (parsed?.name === "StreamCreated") {
+              newId = parsed.args[0].toString();
+              break;
+            }
+          } catch { /* not this event */ }
+        }
+      }
+
       setShowModal(false);
-      const newId = String(myStreams.length);
       const newItem: MyStream = {
         id: newId,
         employee: formData.employee,
@@ -128,10 +161,19 @@ export default function PayrollPage() {
       setMyStreams(updatedStreams);
       localStorage.setItem("arcflow_my_streams", JSON.stringify(updatedStreams));
       toast.success(`Stream #${newId} created! Employee will start vesting immediately.`);
-    } catch {
-      toast.error("Failed to create stream. Please try again.");
+      doLookup(newId);
+    } catch (err: unknown) {
+      const code = (err as { code?: number }).code;
+      if (code !== 4001) {
+        const msg =
+          (err as { shortMessage?: string }).shortMessage ??
+          (err as { message?: string }).message ??
+          "Failed to create stream.";
+        toast.error(msg);
+      }
     } finally {
       setCreating(false);
+      setCreateStatus("");
     }
   };
 
@@ -142,11 +184,43 @@ export default function PayrollPage() {
     setNotFound(false);
     setConfirmRevoke(false);
     try {
-      await new Promise((r) => setTimeout(r, 800));
-      if (id === "0") setStream(MOCK_STREAM);
-      else setNotFound(true);
+      const res = await fetch(`http://localhost:3000/streams/${id}`);
+      if (res.status === 404) { setNotFound(true); return; }
+      if (!res.ok) throw new Error(`Server error ${res.status}`);
+      const data = await res.json() as {
+        id: string; employer: string; employee: string; token: string;
+        totalAmount: string; startTime: number; cliffTime: number;
+        endTime: number; withdrawn: string; status: string;
+      };
+      const short = (addr: string) =>
+        addr ? `${addr.slice(0, 6)}\u2026${addr.slice(-4)}` : "";
+      const total = parseFloat(data.totalAmount);
+      const withdrawn = parseFloat(data.withdrawn);
+      const nowSec = Date.now() / 1000;
+      let vested = 0;
+      if (nowSec >= data.cliffTime && data.endTime > data.startTime) {
+        vested = Math.min(
+          total,
+          total * (nowSec - data.startTime) / (data.endTime - data.startTime)
+        );
+      }
+      const withdrawable = Math.max(0, vested - withdrawn);
+      setStream({
+        id: data.id,
+        employer: short(data.employer),
+        employee: short(data.employee),
+        token: data.token,
+        totalAmount: formatToken(parseToken(total.toFixed(6))),
+        start: data.startTime,
+        cliff: data.cliffTime,
+        end: data.endTime,
+        withdrawn: withdrawn.toFixed(2),
+        vested: vested.toFixed(2),
+        withdrawable: withdrawable.toFixed(2),
+        revoked: data.status === "REVOKED",
+      });
     } catch {
-      toast.error("Lookup failed. Please try again.");
+      toast.error("Lookup failed. Is the backend running?");
       setNotFound(true);
     } finally {
       setLoading(false);
@@ -156,28 +230,32 @@ export default function PayrollPage() {
   const handleLookup = (e: React.FormEvent) => { e.preventDefault(); doLookup(lookupId); };
 
   const doAction = async (action: string) => {
+    if (!stream) return;
     setActionLoading(action);
     try {
-      await new Promise((r) => setTimeout(r, 1400));
+      const id = BigInt(stream.id);
+      const contract = await getStreamsContract();
+      const tx =
+        action === "withdraw" ? await contract.withdraw(id) :
+        action === "revoke"   ? await contract.revoke(id)   :
+        null;
+      if (!tx) return;
+      await tx.wait();
+      await doLookup(stream.id);
       if (action === "withdraw") {
-        setStream((s) =>
-          s
-            ? {
-                ...s,
-                withdrawn: (+s.withdrawn + +s.withdrawable).toFixed(2),
-                withdrawable: "0.00",
-              }
-            : s
-        );
-        toast.success(`Withdrew ${stream?.withdrawable} USDC successfully.`);
+        toast.success(`Withdrew ${stream.withdrawable} ${stream.token} successfully.`);
       } else if (action === "revoke") {
-        setStream((s) => (s ? { ...s, revoked: true } : s));
-        toast.success(
-          "Stream revoked. Vested amount sent to employee, remainder refunded."
-        );
+        toast.success("Stream revoked. Vested amount sent to employee, remainder refunded.");
       }
-    } catch {
-      toast.error("Action failed. Please try again.");
+    } catch (err: unknown) {
+      const code = (err as { code?: number }).code;
+      if (code !== 4001) {
+        const msg =
+          (err as { shortMessage?: string }).shortMessage ??
+          (err as { message?: string }).message ??
+          "Action failed.";
+        toast.error(msg);
+      }
     } finally {
       setActionLoading(null);
     }
@@ -762,6 +840,11 @@ export default function PayrollPage() {
             You must approve {formData.totalAmount || "0"} {formData.token}{" "}
             before creating. The app will prompt you.
           </div>
+          {createStatus && (
+            <div style={{ fontSize: 12, color: "rgba(165,180,252,0.8)" }}>
+              {createStatus}
+            </div>
+          )}
           <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
             <button
               type="button"

@@ -4,7 +4,7 @@
 
 ![Build](https://img.shields.io/badge/build-passing-brightgreen)
 ![Contract Tests](https://img.shields.io/badge/contract%20tests-31%20passing-brightgreen)
-![Backend Tests](https://img.shields.io/badge/backend%20tests-53%20passing-brightgreen)
+![Backend Tests](https://img.shields.io/badge/backend%20tests-61%20passing-brightgreen)
 ![Solidity](https://img.shields.io/badge/solidity-0.8.20-blue)
 ![Network](https://img.shields.io/badge/network-Arc%20Testnet-purple)
 ![License](https://img.shields.io/badge/license-MIT-blue)
@@ -120,7 +120,7 @@ The Circle client (`arcflow-backend/src/services/circleClient.ts`) is modelled d
 | SDK | `@circle-fin/developer-controlled-wallets` (initialized with `apiKey` + `entitySecret`) |
 | Method name | `createTransfer()` (maps to `circleClient.createTransfer` in the reference app) |
 
-The current implementation is a **stub** — it logs the correct endpoint and returns a fake transfer ID. Switching to live payouts requires real credentials and replacing the stub body with actual HTTP calls + EIP-712 `BurnIntent` signing for the cross-chain path (see `arc-multichain-wallet/lib/circle/gateway-sdk.ts → transferGatewayBalanceWithEOA`).
+**Same-chain payouts are live when `CIRCLE_API_KEY` is set** — `circleClient.createTransfer()` calls the Circle Wallets API (`api.circle.com/v1/w3s/wallets/{walletId}/transfers`) with real HTTP. When the key is absent the client operates in stub mode (dev-friendly default). **Cross-chain payouts** (non-ARC destinations) still use a stub path; live routing requires EIP-712 `BurnIntent` signing (see `arc-multichain-wallet/lib/circle/gateway-sdk.ts → transferGatewayBalanceWithEOA`).
 
 ---
 
@@ -226,7 +226,9 @@ npm run dev
 
 ## Configuration
 
-All configuration is via environment variables in the **root `.env`** file.
+Configuration is split across three `.env` files. Copy each `.env.example` → `.env` and fill in the values.
+
+**Root `.env`** — contract deployment (Hardhat):
 
 | Variable | Required | Description |
 |---|---|---|
@@ -234,12 +236,29 @@ All configuration is via environment variables in the **root `.env`** file.
 | `ARC_PRIVATE_KEY` | Yes | Deployer private key (`0x` + 64 hex chars) |
 | `ARC_FEE_COLLECTOR` | Yes | Address that receives protocol fees |
 | `ARC_FEE_BPS` | Yes | Fee in basis points — use `0` for no fee |
-| `ARCFLOW_ESCROW_ADDRESS` | After deploy | Deployed `ArcFlowEscrow` address |
-| `ARCFLOW_STREAMS_ADDRESS` | After deploy | Deployed `ArcFlowStreams` address |
-| `ARCFLOW_PAYOUT_ROUTER_ADDRESS` | After deploy | Deployed `ArcFlowPayoutRouter` address |
-| `CIRCLE_API_KEY` | Optional | Circle API key (production payout routing) |
-| `CIRCLE_ENTITY_SECRET` | Optional | Circle entity secret (production payout routing) |
+
+**`arcflow-frontend/.env`** — frontend contract addresses (Vite build-time):
+
+| Variable | Required | Description |
+|---|---|---|
+| `VITE_ARC_ESCROW_ADDRESS` | After deploy | Deployed `ArcFlowEscrow` address |
+| `VITE_ARC_STREAMS_ADDRESS` | After deploy | Deployed `ArcFlowStreams` address |
+| `VITE_ARC_PAYOUT_ROUTER_ADDRESS` | After deploy | Deployed `ArcFlowPayoutRouter` address |
+| `VITE_USDC_ADDRESS` | After deploy | USDC token contract address on Arc Testnet |
+| `VITE_EURC_ADDRESS` | After deploy | EURC token contract address on Arc Testnet |
+
+**`arcflow-backend/.env`** — backend runtime:
+
+| Variable | Required | Description |
+|---|---|---|
 | `PORT` | Optional | Backend API port (default: `3000`) |
+| `CIRCLE_API_KEY` | Optional | Circle API key — enables live same-chain payout routing |
+| `CIRCLE_WALLET_ID` | Required if `CIRCLE_API_KEY` set | Circle wallet ID for source funds |
+| `CIRCLE_ENTITY_SECRET` | Optional | Circle entity secret (Developer Controlled Wallets SDK) |
+| `CIRCLE_WEBHOOK_SECRET` | Optional | HMAC-SHA256 secret for webhook verification |
+| `PAYOUT_STORE_PATH` | Optional | File path for persistent payout state (e.g. `./data/payouts.json`) |
+| `ARC_TESTNET_RPC_URL` | Yes (worker) | JSON-RPC endpoint for Arc Testnet |
+| `ARC_PAYOUT_ROUTER_ADDRESS` | Yes (worker) | Deployed `ArcFlowPayoutRouter` address |
 
 **Example `.env`:**
 
@@ -374,7 +393,7 @@ npm test
 
 Covers `ArcFlowEscrow`, `ArcFlowStreams`, and `ArcFlowPayoutRouter` using Hardhat + Chai matchers. Scenarios include happy paths, zero-address and zero-amount reverts, time-based auto-release, dispute resolution, stream vesting at 0%/50%/100%, revoke with pro-rata split, and large multi-recipient batches.
 
-### Backend tests — 53 tests
+### Backend tests — 61 tests
 
 ```bash
 cd arcflow-backend
@@ -385,7 +404,7 @@ npm test
 |---|---|---|
 | `test/circleClient.test.ts` | 15 | Chain mapping, CCTP domain IDs, auth headers, stub responses |
 | `test/eventDecoding.test.ts` | 4 | `PayoutInstruction` ABI event encoding and decoding |
-| `test/payoutStore.test.ts` | 17 | set/get/has, sorted getBatch, secondary-index correctness, overwrite semantics, cross-batch isolation |
+| `test/payoutStore.test.ts` | 25 | set/get/has, sorted getBatch, secondary-index correctness, overwrite semantics, cross-batch isolation; **+8 file-persistence tests**: ENOENT first-run, round-trip reload, Date deserialization, batchIndex rebuild, transferIndex rebuild, update persistence, debounce coalescing, no-filePath guard |
 | `test/batchSummary.test.ts` | 17 | `amountToMicro` (exact parsing), `formatMicro` (round-trip), BigInt vs float divergence proof, `computeBatchSummary`, performance benchmark |
 
 Notable: `batchSummary.test.ts` includes a documented benchmark showing the single-pass `Number`-integer approach is **1.67× faster** than 5 separate `filter`/`reduce` float passes for N = 5 000 payouts × 200 runs.
@@ -407,10 +426,10 @@ cd arcflow-frontend && npx tsc --noEmit
 
 ## Roadmap
 
-- [ ] Wire frontend to real contract calls via ethers.js (replace mock data)
+- [x] Wire frontend to real contract calls via ethers.js — `contracts.ts` helper with full approval flow; EscrowPage, PayrollPage, PayoutsPage all call real contracts
 - [x] My Escrows / My Streams / My Batches list views — localStorage-persisted, click-to-load
-- [ ] Connect Circle Wallets / Gateway for real cross-chain payout routing (replace stub in `circleClient.createTransfer()`)
-- [ ] Persist payout state to a database (replace in-memory store)
+- [x] Live Circle same-chain payout routing — `circleClient.ts` calls Circle Wallets API when `CIRCLE_API_KEY` is set; cross-chain (BurnIntent/CCTP) still stub
+- [x] Persist payout state across restarts — optional JSON file persistence via `PAYOUT_STORE_PATH`; 200 ms debounced writes, full index rebuild on load
 - [x] Network mismatch detection — warn and prompt auto-switch to Arc Testnet
 - [ ] Historical obligation charts on the dashboard
 - [ ] Multi-organisation support (org switcher for teams managing multiple wallets)

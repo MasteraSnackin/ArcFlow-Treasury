@@ -15,6 +15,13 @@ import {
 import Modal from "../components/Modal";
 import EmptyState from "../components/EmptyState";
 import { SkeletonLine } from "../components/Skeleton";
+import {
+  getPayoutContract,
+  approveIfNeeded,
+  TOKEN_ADDRESSES,
+  parseToken,
+  encodeChain,
+} from "../lib/contracts";
 
 type MyBatch = { id: string; recipients: number; total: string; token: string; createdAt: string };
 
@@ -45,38 +52,6 @@ type BatchStatus = {
   payouts: PayoutRow[];
 };
 
-const MOCK_BATCH: BatchStatus = {
-  batchId: "0",
-  totalPayouts: 3,
-  totalAmount: "7200.000000",
-  ready: true,
-  payouts: [
-    {
-      index: 0,
-      recipient: "0xabc\u2026001",
-      amount: "2400.000000",
-      destinationChain: "ARC",
-      status: "COMPLETED",
-      circleTransferId: "circle_abc",
-    },
-    {
-      index: 1,
-      recipient: "0xabc\u2026002",
-      amount: "3600.000000",
-      destinationChain: "BASE",
-      status: "QUEUED",
-      circleTransferId: "circle_def",
-    },
-    {
-      index: 2,
-      recipient: "0xabc\u2026003",
-      amount: "1200.000000",
-      destinationChain: "ETH",
-      status: "QUEUED",
-      circleTransferId: "circle_ghi",
-    },
-  ],
-};
 
 // Chains supported by Circle's arc-multichain-wallet integration.
 // POLYGON and OPTIMISM are intentionally excluded — they are not in Circle's
@@ -103,6 +78,7 @@ export default function PayoutsPage() {
   ]);
   const [token, setToken] = useState("USDC");
   const [creating, setCreating] = useState(false);
+  const [createStatus, setCreateStatus] = useState("");
   const [showModal, setShowModal] = useState(false);
   const [lookupId, setLookupId] = useState("");
   const [loading, setLoading] = useState(false);
@@ -131,10 +107,47 @@ export default function PayoutsPage() {
       return;
     }
     setCreating(true);
+    setCreateStatus("");
     try {
-      await new Promise((r) => setTimeout(r, 1800));
+      const tokenAddr = TOKEN_ADDRESSES[token];
+      const payoutContract = await getPayoutContract();
+      const payoutRouterAddr = import.meta.env.VITE_ARC_PAYOUT_ROUTER_ADDRESS as string;
+
+      const recipientAddrs = recipients.map((r) => r.address);
+      const amounts = recipients.map((r) => parseToken(r.amount));
+      const chains = recipients.map((r) => encodeChain(r.chain));
+      const totalBigInt = amounts.reduce((a, b) => a + b, 0n);
+
+      await approveIfNeeded(tokenAddr, payoutRouterAddr, totalBigInt, setCreateStatus);
+
+      setCreateStatus("Sending transaction…");
+      const tx = await payoutContract.createBatchPayout(
+        tokenAddr,
+        recipientAddrs,
+        amounts,
+        chains
+      );
+      setCreateStatus("Waiting for confirmation…");
+      const receipt = await tx.wait();
+
+      // Parse BatchPayoutCreated event to get the real on-chain batch ID.
+      let newId = String(myBatches.length);
+      if (receipt) {
+        for (const log of receipt.logs) {
+          try {
+            const parsed = payoutContract.interface.parseLog({
+              topics: [...log.topics],
+              data: log.data,
+            });
+            if (parsed?.name === "BatchPayoutCreated") {
+              newId = parsed.args[0].toString();
+              break;
+            }
+          } catch { /* not this event */ }
+        }
+      }
+
       setShowModal(false);
-      const newId = String(myBatches.length);
       const newItem: MyBatch = {
         id: newId,
         recipients: recipients.length,
@@ -149,10 +162,19 @@ export default function PayoutsPage() {
         `Batch #${newId} created with ${recipients.length} payouts (${total.toFixed(2)} ${token})`
       );
       setRecipients([{ address: "", amount: "", chain: "ARC" }]);
-    } catch {
-      toast.error("Failed to create batch. Please try again.");
+      doLookup(newId);
+    } catch (err: unknown) {
+      const code = (err as { code?: number }).code;
+      if (code !== 4001) {
+        const msg =
+          (err as { shortMessage?: string }).shortMessage ??
+          (err as { message?: string }).message ??
+          "Failed to create batch.";
+        toast.error(msg);
+      }
     } finally {
       setCreating(false);
+      setCreateStatus("");
     }
   };
 
@@ -162,11 +184,13 @@ export default function PayoutsPage() {
     setBatch(null);
     setNotFound(false);
     try {
-      await new Promise((r) => setTimeout(r, 900));
-      if (id === "0") setBatch(MOCK_BATCH);
-      else setNotFound(true);
+      const res = await fetch(`http://localhost:3000/payouts/${id}/status`);
+      if (res.status === 404) { setNotFound(true); return; }
+      if (!res.ok) throw new Error(`Server error ${res.status}`);
+      const data = await res.json() as BatchStatus;
+      setBatch(data);
     } catch {
-      toast.error("Status fetch failed. Please try again.");
+      toast.error("Status fetch failed. Is the backend running?");
       setNotFound(true);
     } finally {
       setLoading(false);
@@ -713,6 +737,11 @@ export default function PayoutsPage() {
             </strong>{" "}
             to the PayoutRouter contract.
           </div>
+          {createStatus && (
+            <div style={{ fontSize: 12, color: "rgba(165,180,252,0.8)" }}>
+              {createStatus}
+            </div>
+          )}
           <div
             style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}
           >

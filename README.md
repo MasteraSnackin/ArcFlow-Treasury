@@ -492,7 +492,7 @@ cd arcflow-frontend && npx tsc --noEmit
 ---
 
 ## Roadmap
-
+- [ ] Whitepaper explain how and why nanopayment would work and is great for steam payment https://github.com/MasteraSnackin/ArcFlow-Treasury/blob/main/Nanopayment_whitepaper.md 
 - [x] Wire frontend to real contract calls via ethers.js — `contracts.ts` helper with full approval flow
 - [x] My Escrows / My Streams / My Batches list views — localStorage-persisted, click-to-load
 - [x] Live Circle same-chain payout routing — `circleClient.ts` calls Circle Wallets API live when `CIRCLE_API_KEY` is set

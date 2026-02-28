@@ -1,0 +1,67 @@
+[
+  {
+    "anonymous": false,
+    "inputs": [
+      { "indexed": true,  "internalType": "uint256", "name": "id",          "type": "uint256" },
+      { "indexed": true,  "internalType": "address",  "name": "employer",    "type": "address" },
+      { "indexed": true,  "internalType": "address",  "name": "employee",    "type": "address" },
+      { "indexed": false, "internalType": "address",  "name": "token",       "type": "address" },
+      { "indexed": false, "internalType": "uint256",  "name": "totalAmount", "type": "uint256" },
+      { "indexed": false, "internalType": "uint256",  "name": "start",       "type": "uint256" },
+      { "indexed": false, "internalType": "uint256",  "name": "cliff",       "type": "uint256" },
+      { "indexed": false, "internalType": "uint256",  "name": "end",         "type": "uint256" }
+    ],
+    "name": "StreamCreated",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      { "indexed": true,  "internalType": "uint256", "name": "id",       "type": "uint256" },
+      { "indexed": true,  "internalType": "address",  "name": "employee", "type": "address" },
+      { "indexed": false, "internalType": "uint256",  "name": "amount",   "type": "uint256" }
+    ],
+    "name": "Withdrawn",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      { "indexed": true,  "internalType": "uint256", "name": "id",                  "type": "uint256" },
+      { "indexed": false, "internalType": "uint256",  "name": "toEmployee",          "type": "uint256" },
+      { "indexed": false, "internalType": "uint256",  "name": "refundedToEmployer",  "type": "uint256" }
+    ],
+    "name": "Revoked",
+    "type": "event"
+  },
+  {
+    "inputs": [{ "internalType": "uint256", "name": "id", "type": "uint256" }],
+    "name": "streams",
+    "outputs": [
+      { "internalType": "address", "name": "employer",    "type": "address" },
+      { "internalType": "address", "name": "employee",    "type": "address" },
+      { "internalType": "address", "name": "token",       "type": "address" },
+      { "internalType": "uint256", "name": "totalAmount", "type": "uint256" },
+      { "internalType": "uint256", "name": "start",       "type": "uint256" },
+      { "internalType": "uint256", "name": "cliff",       "type": "uint256" },
+      { "internalType": "uint256", "name": "end",         "type": "uint256" },
+      { "internalType": "uint256", "name": "withdrawn",   "type": "uint256" }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [{ "internalType": "uint256", "name": "id", "type": "uint256" }],
+    "name": "getVested",
+    "outputs": [{ "internalType": "uint256", "name": "", "type": "uint256" }],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [{ "internalType": "uint256", "name": "id", "type": "uint256" }],
+    "name": "getWithdrawable",
+    "outputs": [{ "internalType": "uint256", "name": "", "type": "uint256" }],
+    "stateMutability": "view",
+    "type": "function"
+  }
+]

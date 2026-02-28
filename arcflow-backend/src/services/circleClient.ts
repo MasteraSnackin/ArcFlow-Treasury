@@ -130,21 +130,7 @@ class CircleClient {
     }
 
     if (isCrossChain) {
-      // Cross-chain requires BurnIntent EIP-712 signing + CCTP attestation polling.
-      // TODO: implement full Gateway cross-chain flow from arc-multichain-wallet.
-      // For now, log clearly and fall back to stub to avoid silent failures.
-      logger.warn("Circle Gateway cross-chain flow not yet implemented — using stub for cross-chain transfer", {
-        destinationChain: request.destination.chain,
-        idempotencyKey: request.idempotencyKey,
-      });
-      const stubId = `circle_xchain_stub_${Date.now()}`;
-      return {
-        id: stubId,
-        status: "pending",
-        amount: request.amount,
-        destination: request.destination,
-        createDate: new Date().toISOString(),
-      };
+      return this.createCrossChainTransfer(request);
     }
 
     // Same-chain: Circle Wallets API POST /v1/w3s/wallets/{walletId}/transfers
@@ -201,33 +187,157 @@ class CircleClient {
    *
    * @param transferId The Circle transfer ID returned by createTransfer
    */
-  async getTransferStatus(
-    transferId: string
+  /**
+   * Cross-chain transfer via Circle CCTP Gateway API.
+   *
+   * Circle Gateway /v1/transfer accepts a burn-and-mint intent.
+   * The body follows the arc-multichain-wallet gateway-sdk convention:
+   *   sourceDomain       — CCTP domain of the source chain (ARC-TESTNET = 5)
+   *   destinationDomain  — CCTP domain of the destination chain
+   *   amount             — human-readable USDC string
+   *   burnToken          — USDC contract address on the source chain
+   *   destinationAddress — recipient wallet on the destination chain
+   *   idempotencyKey     — caller-supplied UUID for exactly-once delivery
+   *
+   * Circle attestation (the signed burn proof) is produced automatically by
+   * the Gateway service; no client-side EIP-712 signing is required for
+   * Programmable Wallets. If using User-Controlled Wallets the caller must
+   * supply an additional `userToken` header obtained via the Wallets SDK.
+   *
+   * Full reference: https://developers.circle.com/circle-mint/reference/createtransfer
+   */
+  private async createCrossChainTransfer(
+    request: CircleTransferRequest
   ): Promise<CircleTransferResponse> {
-    logger.info("Circle API (STUB): Getting transfer status", { transferId });
+    const burnToken = process.env.CIRCLE_BURN_TOKEN_ADDRESS; // USDC on Arc Testnet
 
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    if (!burnToken) {
+      logger.warn(
+        "CIRCLE_BURN_TOKEN_ADDRESS not set — falling back to stub for cross-chain transfer",
+        { destinationChain: request.destination.chain }
+      );
+      const stubId = `circle_xchain_stub_${Date.now()}`;
+      return {
+        id: stubId,
+        status: "pending",
+        amount: request.amount,
+        destination: request.destination,
+        createDate: new Date().toISOString(),
+      };
+    }
 
-    const isComplete = Math.random() > 0.5;
+    const sourceDomain = CIRCLE_DOMAIN_IDS["ARC-TESTNET"];
+    const endpoint = `${this.gatewayBaseUrl}/transfer`;
 
-    const response: CircleTransferResponse = {
-      id: transferId,
-      status: isComplete ? "complete" : "pending",
-      amount: { amount: "100.00", currency: "USDC" },
-      destination: {
-        type: "blockchain",
-        address: "0x0000000000000000000000000000000000000000",
-        chain: "ARC-TESTNET",
-      },
-      createDate: new Date().toISOString(),
-    };
-
-    logger.info("Circle API (STUB): Transfer status retrieved", {
-      transferId,
-      status: response.status,
+    logger.info("Circle Gateway (LIVE): Creating cross-chain transfer", {
+      endpoint,
+      idempotencyKey: request.idempotencyKey,
+      amount: request.amount.amount,
+      sourceDomain,
+      destinationDomain: request.destinationDomain,
+      destinationChain: request.destination.chain,
     });
 
-    return response;
+    const res = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${this.apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        idempotencyKey:     request.idempotencyKey,
+        amount:             request.amount.amount,
+        sourceDomain,
+        destinationDomain:  request.destinationDomain,
+        burnToken,
+        destinationAddress: request.destination.address,
+      }),
+    });
+
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(`Circle Gateway ${res.status}: ${body}`);
+    }
+
+    const json = await res.json() as {
+      data: { transfer: { id: string; status: string; createDate: string } }
+    };
+    const t = json.data.transfer;
+
+    logger.info("Circle Gateway (LIVE): Cross-chain transfer created", {
+      transferId: t.id,
+      status: t.status,
+    });
+
+    return {
+      id: t.id,
+      status: t.status as CircleTransferResponse["status"],
+      amount: request.amount,
+      destination: request.destination,
+      createDate: t.createDate,
+    };
+  }
+
+  /**
+   * Polls a transfer's current status from Circle.
+   * Cross-chain transfers: GET {gatewayBaseUrl}/transfers/{id}
+   * Same-chain transfers:  GET {walletsBaseUrl}/transfers/{id}
+   */
+  async getTransferStatus(
+    transferId: string,
+    isCrossChain = false
+  ): Promise<CircleTransferResponse> {
+    if (!this.apiKey) {
+      // Stub mode
+      logger.info("Circle API (STUB): getTransferStatus", { transferId });
+      return {
+        id: transferId,
+        status: "complete",
+        amount: { amount: "0.000000", currency: "USDC" },
+        destination: {
+          type: "blockchain",
+          address: "0x0000000000000000000000000000000000000000",
+          chain: "ARC-TESTNET",
+        },
+        createDate: new Date().toISOString(),
+      };
+    }
+
+    const base = isCrossChain ? this.gatewayBaseUrl : this.walletsBaseUrl;
+    const res = await fetch(`${base}/transfers/${transferId}`, {
+      headers: { Authorization: `Bearer ${this.apiKey}` },
+    });
+
+    if (!res.ok) {
+      throw new Error(`Circle getTransferStatus ${res.status}: ${await res.text()}`);
+    }
+
+    const json = await res.json() as {
+      data: {
+        transfer: {
+          id: string; status: string; createDate: string;
+          amounts?: { amount: string; currency: string }[];
+          destination?: { address: string; chain: string };
+        };
+      };
+    };
+    const t = json.data.transfer;
+    const amt = t.amounts?.[0];
+
+    return {
+      id: t.id,
+      status: t.status as CircleTransferResponse["status"],
+      amount: {
+        amount:   amt?.amount   ?? "0.000000",
+        currency: (amt?.currency ?? "USDC") as CircleCurrency,
+      },
+      destination: {
+        type: "blockchain",
+        address: t.destination?.address ?? "0x0000000000000000000000000000000000000000",
+        chain:   (t.destination?.chain  ?? "ARC-TESTNET") as CircleBlockchainId,
+      },
+      createDate: t.createDate,
+    };
   }
 
   /**

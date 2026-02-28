@@ -1,0 +1,60 @@
+[
+  {
+    "anonymous": false,
+    "inputs": [
+      { "indexed": true,  "internalType": "uint256", "name": "id",          "type": "uint256" },
+      { "indexed": true,  "internalType": "address",  "name": "payer",       "type": "address" },
+      { "indexed": true,  "internalType": "address",  "name": "payee",       "type": "address" },
+      { "indexed": false, "internalType": "address",  "name": "token",       "type": "address" },
+      { "indexed": false, "internalType": "uint256",  "name": "amount",      "type": "uint256" },
+      { "indexed": false, "internalType": "uint256",  "name": "expiry",      "type": "uint256" },
+      { "indexed": false, "internalType": "address",  "name": "arbitrator",  "type": "address" }
+    ],
+    "name": "EscrowCreated",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [{ "indexed": true, "internalType": "uint256", "name": "id", "type": "uint256" }],
+    "name": "EscrowDisputed",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      { "indexed": true,  "internalType": "uint256", "name": "id",             "type": "uint256" },
+      { "indexed": false, "internalType": "bool",    "name": "releaseToPayee", "type": "bool" }
+    ],
+    "name": "EscrowResolved",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [{ "indexed": true, "internalType": "uint256", "name": "id", "type": "uint256" }],
+    "name": "EscrowReleased",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [{ "indexed": true, "internalType": "uint256", "name": "id", "type": "uint256" }],
+    "name": "EscrowRefunded",
+    "type": "event"
+  },
+  {
+    "inputs": [{ "internalType": "uint256", "name": "id", "type": "uint256" }],
+    "name": "escrows",
+    "outputs": [
+      { "internalType": "address", "name": "payer",      "type": "address" },
+      { "internalType": "address", "name": "payee",      "type": "address" },
+      { "internalType": "address", "name": "token",      "type": "address" },
+      { "internalType": "uint256", "name": "amount",     "type": "uint256" },
+      { "internalType": "uint256", "name": "expiry",     "type": "uint256" },
+      { "internalType": "address", "name": "arbitrator", "type": "address" },
+      { "internalType": "bool",    "name": "disputed",   "type": "bool" },
+      { "internalType": "bool",    "name": "released",   "type": "bool" },
+      { "internalType": "bool",    "name": "refunded",   "type": "bool" }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  }
+]

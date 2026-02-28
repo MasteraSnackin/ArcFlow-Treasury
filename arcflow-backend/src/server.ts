@@ -1,6 +1,7 @@
 import crypto from "crypto";
 import express, { Request, Response } from "express";
 import { PayoutWorker } from "./workers/payoutWorker";
+import { EscrowStreamWorker } from "./workers/escrowStreamWorker";
 import { logger } from "./config/logger";
 
 const app = express();
@@ -163,6 +164,7 @@ export function computeBatchSummary(payouts: PayoutStatus[]) {
 // Initialize worker (in production, this would be a separate process)
 // ---------------------------------------------------------------------------
 let worker: PayoutWorker | null = null;
+let escrowStreamWorker: EscrowStreamWorker | null = null;
 
 /**
  * Health check endpoint
@@ -350,35 +352,43 @@ app.post("/webhooks/circle", (req: RequestWithRawBody, res: Response) => {
 // ---------------------------------------------------------------------------
 
 /**
- * Get escrow status by ID (stub — no contract calls until deployment).
+ * Get escrow status by ID.
  *
- * Returns mock data for ID 0; 404 for any other ID.
- * Once ArcFlowEscrow is deployed, replace with an ethers.js call to
- * ArcFlowEscrow.escrows(id) and map the result to this response shape.
+ * Priority:
+ *   1. EscrowStore (populated by EscrowStreamWorker event listener)
+ *   2. Direct on-chain read via EscrowStreamWorker.fetchEscrowFromChain()
+ *   3. 404 — escrow does not exist or contracts not yet deployed
  *
  * GET /escrows/:id
  */
-app.get("/escrows/:id", (req: Request, res: Response) => {
+app.get("/escrows/:id", async (req: Request, res: Response) => {
   const { id } = req.params;
 
   if (!/^\d+$/.test(id)) {
     return res.status(400).json({ error: "Invalid escrow ID: must be a non-negative integer" });
   }
 
-  if (id !== "0") {
-    return res.status(404).json({ error: "Escrow not found", id });
+  // 1 — Check in-memory index
+  if (escrowStreamWorker) {
+    const cached = escrowStreamWorker.escrowStore.get(id);
+    if (cached) {
+      return res.json(cached);
+    }
+
+    // 2 — Fall back to direct chain read (handles IDs created before backend started)
+    try {
+      const onChain = await escrowStreamWorker.fetchEscrowFromChain(id);
+      if (onChain) return res.json(onChain);
+    } catch (err) {
+      logger.error("Error fetching escrow from chain", { err, id });
+    }
   }
 
-  const now = Math.floor(Date.now() / 1000);
-  res.json({
-    id: "0",
-    payer:      "0x1111111111111111111111111111111111111111",
-    payee:      "0x2222222222222222222222222222222222222222",
-    token:      "USDC",
-    amount:     "500.000000",
-    expiry:     now + 3600,
-    arbitrator: "0x3333333333333333333333333333333333333333",
-    status:     "OPEN",
+  return res.status(404).json({
+    error: escrowStreamWorker
+      ? "Escrow not found"
+      : "Escrow indexer not running — set ARC_ESCROW_ADDRESS and ARC_STREAMS_ADDRESS to enable",
+    id,
   });
 });
 
@@ -387,37 +397,46 @@ app.get("/escrows/:id", (req: Request, res: Response) => {
 // ---------------------------------------------------------------------------
 
 /**
- * Get stream status by ID (stub — no contract calls until deployment).
+ * Get stream status by ID.
  *
- * Returns mock data for ID 0; 404 for any other ID.
- * Once ArcFlowStreams is deployed, replace with an ethers.js call to
- * ArcFlowStreams.streams(id) and compute vested/withdrawable amounts on-chain.
+ * Priority:
+ *   1. StreamStore (populated by EscrowStreamWorker event listener)
+ *   2. Direct on-chain read via EscrowStreamWorker.fetchStreamFromChain()
+ *   3. 404 — stream does not exist or contracts not yet deployed
+ *
+ * The response includes real-time vested and withdrawable amounts computed
+ * on-chain (getVested / getWithdrawable) when fetched directly from chain.
  *
  * GET /streams/:id
  */
-app.get("/streams/:id", (req: Request, res: Response) => {
+app.get("/streams/:id", async (req: Request, res: Response) => {
   const { id } = req.params;
 
   if (!/^\d+$/.test(id)) {
     return res.status(400).json({ error: "Invalid stream ID: must be a non-negative integer" });
   }
 
-  if (id !== "0") {
-    return res.status(404).json({ error: "Stream not found", id });
+  // 1 — Check in-memory index
+  if (escrowStreamWorker) {
+    const cached = escrowStreamWorker.streamStore.get(id);
+    if (cached) {
+      return res.json(cached);
+    }
+
+    // 2 — Fall back to direct chain read
+    try {
+      const onChain = await escrowStreamWorker.fetchStreamFromChain(id);
+      if (onChain) return res.json(onChain);
+    } catch (err) {
+      logger.error("Error fetching stream from chain", { err, id });
+    }
   }
 
-  const now = Math.floor(Date.now() / 1000);
-  res.json({
-    id:          "0",
-    employer:    "0x1111111111111111111111111111111111111111",
-    employee:    "0x4444444444444444444444444444444444444444",
-    token:       "USDC",
-    totalAmount: "10000.000000",
-    startTime:   now - 86400,         // started 1 day ago
-    cliffTime:   now - 86400 + 3600,  // cliff was 1 h after start
-    endTime:     now + 86400 * 29,    // ends in 29 more days
-    withdrawn:   "0.000000",
-    status:      "ACTIVE",
+  return res.status(404).json({
+    error: escrowStreamWorker
+      ? "Stream not found"
+      : "Stream indexer not running — set ARC_ESCROW_ADDRESS and ARC_STREAMS_ADDRESS to enable",
+    id,
   });
 });
 
@@ -441,37 +460,48 @@ const startServer = async () => {
     process.exit(1);
   });
 
-  // Start worker separately — failure is non-fatal so the API stays up.
-  // Without ARC_TESTNET_RPC_URL the worker cannot connect; status/webhook
-  // endpoints continue to work normally.
+  // Start PayoutWorker (non-fatal — needs ARC_TESTNET_RPC_URL + ARC_PAYOUT_ROUTER_ADDRESS).
   try {
     worker = new PayoutWorker({ filePath: process.env.PAYOUT_STORE_PATH });
     await worker.start();
   } catch (error) {
     logger.warn(
-      "PayoutWorker failed to start — event listening disabled. " +
+      "PayoutWorker failed to start — payout event listening disabled. " +
       "Set ARC_TESTNET_RPC_URL and ARC_PAYOUT_ROUTER_ADDRESS to enable it.",
       { error }
+    );
+  }
+
+  // Start EscrowStreamWorker (non-fatal — additionally needs ARC_ESCROW_ADDRESS + ARC_STREAMS_ADDRESS).
+  const rpcUrl        = process.env.ARC_TESTNET_RPC_URL;
+  const escrowAddr    = process.env.ARC_ESCROW_ADDRESS;
+  const streamsAddr   = process.env.ARC_STREAMS_ADDRESS;
+  if (rpcUrl && escrowAddr && streamsAddr) {
+    try {
+      escrowStreamWorker = new EscrowStreamWorker(rpcUrl, 5042002, escrowAddr, streamsAddr);
+      await escrowStreamWorker.start();
+    } catch (error) {
+      logger.warn("EscrowStreamWorker failed to start — /escrows/:id and /streams/:id will attempt direct chain reads.", { error });
+      escrowStreamWorker = null;
+    }
+  } else {
+    logger.warn(
+      "EscrowStreamWorker disabled — set ARC_TESTNET_RPC_URL, ARC_ESCROW_ADDRESS, " +
+      "and ARC_STREAMS_ADDRESS to enable escrow/stream indexing."
     );
   }
 };
 
 // Graceful shutdown
-process.on("SIGINT", async () => {
-  logger.info("Received SIGINT, shutting down gracefully...");
-  if (worker) {
-    await worker.stop();
-  }
+async function shutdown(signal: string) {
+  logger.info(`Received ${signal}, shutting down gracefully...`);
+  if (worker)             await worker.stop();
+  if (escrowStreamWorker) await escrowStreamWorker.stop();
   process.exit(0);
-});
+}
 
-process.on("SIGTERM", async () => {
-  logger.info("Received SIGTERM, shutting down gracefully...");
-  if (worker) {
-    await worker.stop();
-  }
-  process.exit(0);
-});
+process.on("SIGINT",  () => shutdown("SIGINT"));
+process.on("SIGTERM", () => shutdown("SIGTERM"));
 
 // Start if running directly
 if (require.main === module) {

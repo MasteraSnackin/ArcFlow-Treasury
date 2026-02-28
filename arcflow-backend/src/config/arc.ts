@@ -9,6 +9,10 @@ export interface ArcConfig {
   rpcUrl: string;
   chainId: number;
   payoutRouterAddress: string;
+  /** Optional — enables escrow/stream event indexing when set. */
+  escrowAddress?: string;
+  /** Optional — enables escrow/stream event indexing when set. */
+  streamsAddress?: string;
 }
 
 export function getArcConfig(): ArcConfig {
@@ -27,6 +31,8 @@ export function getArcConfig(): ArcConfig {
     rpcUrl,
     chainId: ARC_TESTNET_CHAIN_ID,
     payoutRouterAddress,
+    escrowAddress:  process.env.ARC_ESCROW_ADDRESS  || undefined,
+    streamsAddress: process.env.ARC_STREAMS_ADDRESS || undefined,
   };
 }
 

@@ -33,6 +33,7 @@ export default function App() {
           <Route path="/escrow" element={<EscrowPage />} />
           <Route path="/payroll" element={<PayrollPage />} />
           <Route path="/payouts" element={<PayoutsPage />} />
+          <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Route>
       </Routes>
     </BrowserRouter>

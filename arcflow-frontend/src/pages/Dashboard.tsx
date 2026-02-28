@@ -11,84 +11,25 @@ import {
 import { MetricSkeleton } from "../components/Skeleton";
 import EmptyState from "../components/EmptyState";
 
-// Simulated data
-const METRICS = [
-  {
-    label: "USDC in Escrow",
-    value: "12,400.00",
-    token: "USDC",
-    icon: ShieldCheck,
-    color: "#6366f1",
-    change: "+2 active",
-  },
-  {
-    label: "USDC in Streams",
-    value: "48,750.00",
-    token: "USDC",
-    icon: GitBranch,
-    color: "#8b5cf6",
-    change: "3 streams",
-  },
-  {
-    label: "Pending Payout Batches",
-    value: "7,200.00",
-    token: "USDC",
-    icon: ArrowRightLeft,
-    color: "#06b6d4",
-    change: "1 batch",
-  },
-  {
-    label: "Total Treasury Value",
-    value: "68,350.00",
-    token: "USDC",
-    icon: TrendingUp,
-    color: "#10b981",
-    change: "All chains",
-  },
-];
+// Shapes mirror what each page writes to localStorage
+type StoredEscrow = { id: string; payee: string; amount: string; token: string; createdAt: string };
+type StoredStream = { id: string; employee: string; amount: string; token: string; createdAt: string };
+type StoredBatch  = { id: string; recipients: number; total: string; token: string; createdAt: string };
 
-const RECENT = [
-  {
-    type: "escrow",
-    id: "0",
-    label: "Escrow #0",
-    detail: "2,400 USDC \u2192 0xabc\u2026123",
-    status: "OPEN",
-    time: "2h ago",
-  },
-  {
-    type: "escrow",
-    id: "1",
-    label: "Escrow #1",
-    detail: "10,000 USDC \u2192 0xdef\u2026456",
-    status: "DISPUTED",
-    time: "5h ago",
-  },
-  {
-    type: "stream",
-    id: "0",
-    label: "Stream #0",
-    detail: "18,000 USDC \u2192 0x111\u2026aaa",
-    status: "ACTIVE",
-    time: "1d ago",
-  },
-  {
-    type: "stream",
-    id: "1",
-    label: "Stream #1",
-    detail: "30,750 USDC \u2192 0x222\u2026bbb",
-    status: "ACTIVE",
-    time: "2d ago",
-  },
-  {
-    type: "payout",
-    id: "0",
-    label: "Batch #0",
-    detail: "3\u00d7recipients, 7,200 USDC",
-    status: "QUEUED",
-    time: "30m ago",
-  },
-];
+function readLS<T>(key: string): T[] {
+  try { return JSON.parse(localStorage.getItem(key) ?? "[]"); }
+  catch { return []; }
+}
+
+function timeAgo(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const m = Math.floor(diff / 60000);
+  if (m < 1) return "just now";
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
 
 const STATUS_MAP: Record<string, string> = {
   OPEN: "badge-open",
@@ -107,6 +48,91 @@ const TYPE_ICON: Record<string, React.ElementType> = {
 
 export default function Dashboard() {
   const [loading] = useState(false);
+
+  // Read session items from localStorage (written by EscrowPage, PayrollPage, PayoutsPage)
+  const escrows = readLS<StoredEscrow>("arcflow_my_escrows");
+  const streams = readLS<StoredStream>("arcflow_my_streams");
+  const batches = readLS<StoredBatch>("arcflow_my_batches");
+
+  const escrowTotal = escrows.reduce((s, e)  => s + (+e.amount || 0), 0);
+  const streamTotal = streams.reduce((s, st) => s + (+st.amount || 0), 0);
+  const batchTotal  = batches.reduce((s, b)  => s + (+b.total   || 0), 0);
+  const grandTotal  = escrowTotal + streamTotal + batchTotal;
+
+  const fmt = (n: number) =>
+    n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  const METRICS = [
+    {
+      label: "USDC in Escrow",
+      value: fmt(escrowTotal),
+      token: "USDC",
+      icon: ShieldCheck,
+      color: "#6366f1",
+      change: escrows.length
+        ? `${escrows.length} escrow${escrows.length !== 1 ? "s" : ""}`
+        : "None yet",
+    },
+    {
+      label: "USDC in Streams",
+      value: fmt(streamTotal),
+      token: "USDC",
+      icon: GitBranch,
+      color: "#8b5cf6",
+      change: streams.length
+        ? `${streams.length} stream${streams.length !== 1 ? "s" : ""}`
+        : "None yet",
+    },
+    {
+      label: "Pending Payout Batches",
+      value: fmt(batchTotal),
+      token: "USDC",
+      icon: ArrowRightLeft,
+      color: "#06b6d4",
+      change: batches.length
+        ? `${batches.length} batch${batches.length !== 1 ? "es" : ""}`
+        : "None yet",
+    },
+    {
+      label: "Total Treasury Value",
+      value: fmt(grandTotal),
+      token: "USDC",
+      icon: TrendingUp,
+      color: "#10b981",
+      change: "All chains",
+    },
+  ];
+
+  // Combine all created items, sort newest-first, show up to 5
+  const RECENT = [
+    ...escrows.map(e => ({
+      type: "escrow",
+      id: e.id,
+      label: `Escrow #${e.id}`,
+      detail: `${e.amount} ${e.token} → ${e.payee || "—"}`,
+      status: "OPEN",
+      time: timeAgo(e.createdAt),
+      _ts: new Date(e.createdAt).getTime(),
+    })),
+    ...streams.map(s => ({
+      type: "stream",
+      id: s.id,
+      label: `Stream #${s.id}`,
+      detail: `${s.amount} ${s.token} → ${s.employee || "—"}`,
+      status: "ACTIVE",
+      time: timeAgo(s.createdAt),
+      _ts: new Date(s.createdAt).getTime(),
+    })),
+    ...batches.map(b => ({
+      type: "payout",
+      id: b.id,
+      label: `Batch #${b.id}`,
+      detail: `${b.recipients} recipient${b.recipients !== 1 ? "s" : ""}, ${b.total} ${b.token}`,
+      status: "QUEUED",
+      time: timeAgo(b.createdAt),
+      _ts: new Date(b.createdAt).getTime(),
+    })),
+  ].sort((a, b) => b._ts - a._ts).slice(0, 5);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
@@ -218,7 +244,7 @@ export default function Dashboard() {
               Recent Activity
             </div>
             <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>
-              {RECENT.length} events
+              {RECENT.length} event{RECENT.length !== 1 ? "s" : ""}
             </div>
           </div>
           {RECENT.length === 0 ? (
@@ -233,7 +259,7 @@ export default function Dashboard() {
                 const Icon = TYPE_ICON[item.type];
                 return (
                   <div
-                    key={i}
+                    key={`${item.type}-${item.id}`}
                     style={{
                       display: "flex",
                       alignItems: "center",

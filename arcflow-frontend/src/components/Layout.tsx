@@ -9,8 +9,10 @@ import {
   Wallet,
   Circle,
   AlertCircle,
+  AlertTriangle,
   ChevronRight,
 } from "lucide-react";
+import toast from "react-hot-toast";
 
 const NAV = [
   {
@@ -36,10 +38,23 @@ const PAGE_TITLES: Record<string, string> = {
   "/payouts":   "Payout Batches",
 };
 
+const ARC_CHAIN_ID = "0x4cef52"; // 5042002 decimal
+
+type EthProvider = {
+  request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
+  on: (event: string, cb: (...args: unknown[]) => void) => void;
+  removeListener: (event: string, cb: (...args: unknown[]) => void) => void;
+};
+
+function getEth(): EthProvider | undefined {
+  return (window as unknown as { ethereum?: EthProvider }).ethereum;
+}
+
 export default function Layout() {
   const location = useLocation();
   const [apiStatus, setApiStatus] = useState<"online" | "offline" | "loading">("loading");
   const [walletAddr, setWalletAddr] = useState<string | null>(null);
+  const [chainId, setChainId] = useState<string | null>(null);
 
   useEffect(() => {
     const checkStatus = () => {
@@ -52,20 +67,57 @@ export default function Layout() {
     return () => clearInterval(interval);
   }, []);
 
+  // Detect chain on mount and listen for changes
+  useEffect(() => {
+    const eth = getEth();
+    if (!eth) return;
+
+    const handleChainChanged = (id: unknown) => {
+      setChainId(String(id));
+    };
+
+    eth.request({ method: "eth_chainId" })
+      .then((id) => setChainId(String(id)))
+      .catch(() => {/* not yet connected */});
+
+    eth.on("chainChanged", handleChainChanged);
+    return () => eth.removeListener("chainChanged", handleChainChanged);
+  }, []);
+
   const connectWallet = async () => {
-    const eth = (window as unknown as { ethereum?: { request: (args: { method: string }) => Promise<string[]> } }).ethereum;
+    const eth = getEth();
     if (eth) {
       try {
-        const [addr] = await eth.request({ method: "eth_requestAccounts" });
-        setWalletAddr(addr);
+        const accounts = await eth.request({ method: "eth_requestAccounts" }) as string[];
+        setWalletAddr(accounts[0]);
+        const id = await eth.request({ method: "eth_chainId" }) as string;
+        setChainId(id);
       } catch {
         /* user rejected */
       }
     } else {
-      // Simulate for demo
+      // Simulate for demo (no MetaMask installed)
       setWalletAddr("0x1234567890abcdef1234567890abcdef12345678");
     }
   };
+
+  const switchNetwork = async () => {
+    const eth = getEth();
+    if (!eth) return;
+    try {
+      await eth.request({
+        method: "wallet_switchEthereumChain",
+        params: [{ chainId: ARC_CHAIN_ID }],
+      });
+    } catch (err: unknown) {
+      const code = (err as { code?: number }).code;
+      if (code === 4902) {
+        toast.error("Arc Testnet not found in wallet. Please add it manually.");
+      }
+    }
+  };
+
+  const wrongNetwork = walletAddr !== null && chainId !== null && chainId !== ARC_CHAIN_ID;
 
   const shortAddr = walletAddr
     ? `${walletAddr.slice(0, 6)}\u2026${walletAddr.slice(-4)}`
@@ -327,6 +379,41 @@ export default function Layout() {
             )}
           </div>
         </header>
+
+        {/* Network mismatch banner */}
+        {wrongNetwork && (
+          <div
+            style={{
+              background: "rgba(245,158,11,0.12)",
+              borderBottom: "1px solid rgba(245,158,11,0.25)",
+              padding: "10px 28px",
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+            }}
+          >
+            <AlertTriangle size={15} color="#fbbf24" style={{ flexShrink: 0 }} />
+            <span style={{ fontSize: 13, color: "#fbbf24", flex: 1 }}>
+              Wrong network detected. ArcFlow requires{" "}
+              <strong>Arc Testnet (Chain ID 5042002)</strong>.
+            </span>
+            <button
+              onClick={switchNetwork}
+              style={{
+                fontSize: 12,
+                fontWeight: 600,
+                color: "#fbbf24",
+                background: "rgba(245,158,11,0.15)",
+                border: "1px solid rgba(245,158,11,0.35)",
+                borderRadius: 7,
+                padding: "5px 12px",
+                cursor: "pointer",
+              }}
+            >
+              Switch Network
+            </button>
+          </div>
+        )}
 
         {/* Page content */}
         <main

@@ -1,26 +1,28 @@
-# ArcFlow Treasury - Backend
+# ArcFlow Treasury — Backend
 
-Event listener and API server for the ArcFlow Treasury project.
+Event listener and REST API server for ArcFlow Treasury.
 
 ## Overview
 
-The backend consists of two main components:
+The backend has two main components:
 
-1. **Payout Worker**: Listens to `PayoutInstruction` events from the `ArcFlowPayoutRouter` contract on Arc testnet and processes them via Circle's API
-2. **REST API Server**: Provides endpoints for querying payout and batch status
+1. **PayoutWorker** — subscribes to `PayoutInstruction` events from `ArcFlowPayoutRouter` on Arc Testnet and routes them to Circle's payout infrastructure
+2. **Express REST API** — surfaces payout status, accepts Circle webhooks, and provides health checks
 
 ## Features
 
-- **Event Listening**: Real-time monitoring of `PayoutInstruction` events from Arc testnet
-- **Circle Integration**: Stub implementation of Circle Wallets/Gateway/CCTP for cross-chain payouts
-- **Status Tracking**: In-memory storage of payout statuses (MVP - would use database in production)
-- **RESTful API**: Simple HTTP endpoints for frontend integration
-- **Logging**: Structured logging with Winston
+- ✅ **Event listening** — historical (last 1 000 blocks) + real-time WebSocket subscription
+- ✅ **Circle same-chain routing** — live HTTP calls to Circle Wallets API when `CIRCLE_API_KEY` is set; stub mode when absent
+- ✅ **Idempotency** — keys formatted as `arcflow_{batchId}-{index}_{txHash}` prevent duplicate Circle calls on re-delivery
+- ✅ **PayoutStore** — in-memory Map with `batchIndex` and `transferIndex` secondary indexes for O(k)/O(1) lookups; optional JSON file persistence via `PAYOUT_STORE_PATH`
+- ✅ **HMAC webhook verification** — `x-circle-signature` verified with `crypto.timingSafeEqual` when `CIRCLE_WEBHOOK_SECRET` is set
+- ✅ **Single-pass BigInt arithmetic** — batch summaries use exact integer math (~1.9× faster than multi-pass float for large batches)
+- ✅ **Structured logging** — Winston to console + `combined.log` + `error.log`
 
 ## Prerequisites
 
 - Node.js 18+
-- Arc testnet RPC access
+- Arc Testnet RPC URL
 - Deployed `ArcFlowPayoutRouter` contract address
 
 ## Installation
@@ -32,51 +34,48 @@ npm install
 
 ## Configuration
 
-Create a `.env` file in the `arcflow-backend` directory:
-
-```bash
-# Arc Testnet Configuration
-ARC_TESTNET_RPC_URL=https://your-arc-testnet-rpc-url
-ARC_PAYOUT_ROUTER_ADDRESS=0xYourDeployedPayoutRouterAddress
-
-# Server Configuration
-PORT=3000
-NODE_ENV=development
-
-# Circle API Configuration (stubbed for now)
-CIRCLE_API_KEY=stub_key_not_required_yet
-CIRCLE_ENTITY_SECRET=stub_secret_not_required_yet
-
-# Logging
-LOG_LEVEL=info
-```
-
-You can copy from `.env.example`:
+Copy the example and fill in your values:
 
 ```bash
 cp .env.example .env
-# Then edit .env with your values
+```
+
+`arcflow-backend/.env`:
+
+```env
+# Arc Testnet
+ARC_TESTNET_RPC_URL=https://your-arc-testnet-rpc-url
+ARC_PAYOUT_ROUTER_ADDRESS=0x...   # ArcFlowPayoutRouter deployed address
+
+# Server
+PORT=3000
+
+# Circle API
+# Leave blank → stub mode (logs fake IDs; good for local dev)
+# Set a real key → live same-chain routing via Circle Wallets API
+CIRCLE_API_KEY=
+CIRCLE_WALLET_ID=                  # required when CIRCLE_API_KEY is set
+CIRCLE_ENTITY_SECRET=              # Developer Controlled Wallets SDK (optional)
+CIRCLE_WEBHOOK_SECRET=             # HMAC key for webhook verification (optional)
+
+# Persistence
+# Leave blank → payout state resets on restart
+# Set a file path → payout state survives restarts (directory must exist)
+PAYOUT_STORE_PATH=./data/payouts.json
 ```
 
 ## Running
 
-### Development Mode
-
-**Option 1: Run worker only** (event listener)
 ```bash
-npm run dev:worker
-```
-
-**Option 2: Run server** (includes worker + HTTP API)
-```bash
+# Development — server + worker (recommended)
 npm run dev:server
-```
 
-### Production Mode
+# Development — worker only (no HTTP API)
+npm run dev:worker
 
-```bash
+# Production
 npm run build
-npm run start:server  # Or start:worker
+npm run start:server
 ```
 
 ## Project Structure
@@ -85,20 +84,26 @@ npm run start:server  # Or start:worker
 arcflow-backend/
 ├── src/
 │   ├── config/
-│   │   ├── arc.ts              # Arc provider configuration
-│   │   └── logger.ts           # Winston logger setup
+│   │   ├── arc.ts              # Arc provider (ethers.js JsonRpcProvider)
+│   │   └── logger.ts           # Winston logger
 │   ├── services/
-│   │   └── circleClient.ts     # Circle API stub
+│   │   └── circleClient.ts     # Circle Wallets / Gateway / CCTP client
+│   ├── stores/
+│   │   └── payoutStore.ts      # PayoutStore — Map + secondary indexes + JSON persistence
 │   ├── workers/
-│   │   └── payoutWorker.ts     # Event listener worker
+│   │   └── payoutWorker.ts     # PayoutInstruction event listener
 │   ├── types/
 │   │   └── index.ts            # TypeScript interfaces
 │   ├── abis/
-│   │   └── ArcFlowPayoutRouter.json  # Contract ABI
-│   └── server.ts               # Express REST API
+│   │   └── ArcFlowPayoutRouter.json  # Contract ABI (full)
+│   └── server.ts               # Express REST API + HMAC webhook
+├── data/                        # JSON persistence directory (gitignored)
+│   └── .gitkeep
 ├── test/
-│   ├── circleClient.test.ts    # Circle client unit tests
-│   └── eventDecoding.test.ts   # Event decoding tests
+│   ├── circleClient.test.ts    # 15 tests
+│   ├── eventDecoding.test.ts   # 4 tests
+│   ├── payoutStore.test.ts     # 25 tests
+│   └── batchSummary.test.ts    # 17 tests
 ├── package.json
 ├── tsconfig.json
 ├── .env.example
@@ -107,206 +112,226 @@ arcflow-backend/
 
 ## API Endpoints
 
-### Health Check
+### `GET /status`
 
-```http
-GET /status
+Health check.
+
+```bash
+curl http://localhost:3000/status
 ```
 
-**Response:**
 ```json
-{
-  "status": "OK",
-  "timestamp": "2025-02-27T10:00:00.000Z",
-  "service": "arcflow-backend"
-}
+{ "status": "ok", "network": "arc-testnet" }
 ```
 
-### Get Batch Status
+---
 
-```http
-GET /payouts/:batchId/status
+### `GET /payouts/:batchId/status`
+
+Returns a single-pass aggregated summary and full payout list for a batch.
+
+```bash
+curl http://localhost:3000/payouts/1/status
 ```
 
-**Response:**
 ```json
 {
   "batchId": "1",
   "totalPayouts": 3,
   "totalAmount": "600.000000",
   "ready": true,
-  "summary": {
-    "queued": 2,
-    "processing": 0,
-    "completed": 1,
-    "failed": 0
-  },
+  "summary": { "queued": 2, "processing": 0, "completed": 1, "failed": 0 },
   "payouts": [
     {
       "index": 0,
       "recipient": "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb",
       "amount": "100.000000",
-      "destinationChain": "BASE",
-      "status": "QUEUED",
+      "destinationChain": "BASE-SEPOLIA",
+      "status": "COMPLETED",
       "circleTransferId": "circle_transfer_123...",
-      "createdAt": "2025-02-27T10:00:00.000Z",
-      "updatedAt": "2025-02-27T10:00:00.000Z"
+      "createdAt": "2026-02-28T10:00:00.000Z",
+      "updatedAt": "2026-02-28T10:05:00.000Z"
     }
   ]
 }
 ```
 
-### Get Single Payout Status
+`totalAmount` uses exact BigInt arithmetic (no floating-point drift), always formatted to 6 decimal places.
 
-```http
-GET /payouts/:batchId/:index/status
+---
+
+### `GET /payouts/:batchId/:index/status`
+
+Returns status for a single recipient within a batch.
+
+```bash
+curl http://localhost:3000/payouts/1/0/status
 ```
 
-**Response:**
+**Status values:** `QUEUED` · `PROCESSING` · `COMPLETED` · `FAILED`
+
+---
+
+### `POST /webhooks/circle`
+
+Receives Circle transfer status callbacks. When `CIRCLE_WEBHOOK_SECRET` is set, the `x-circle-signature` HMAC-SHA256 header is verified before processing.
+
+```bash
+curl -X POST http://localhost:3000/webhooks/circle \
+  -H "Content-Type: application/json" \
+  -H "x-circle-signature: <hmac-hex>" \
+  -d '{"transfer":{"id":"circle_transfer_123","status":"complete"}}'
+```
+
 ```json
-{
-  "batchId": "1",
-  "index": 0,
-  "recipient": "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb",
-  "amount": "100.000000",
-  "destinationChain": "BASE",
-  "status": "QUEUED",
-  "circleTransferId": "circle_transfer_123...",
-  "createdAt": "2025-02-27T10:00:00.000Z",
-  "updatedAt": "2025-02-27T10:00:00.000Z"
-}
+{ "received": true, "updated": true }
 ```
+
+Circle status → payout status mapping:
+| Circle status | Payout status |
+|--------------|---------------|
+| `pending` | `PROCESSING` |
+| `complete` | `COMPLETED` |
+| `failed` | `FAILED` |
+
+---
+
+### `GET /escrows/:id`
+
+Escrow status stub — returns mock data for `id=0`; `404` otherwise. The frontend reads escrow state directly from the contract via ethers.js; this endpoint is provided for completeness.
+
+### `GET /streams/:id`
+
+Stream status stub — same as above for streams.
+
+---
 
 ## Testing
-
-Run the unit tests:
 
 ```bash
 npm test
 ```
 
-Tests cover:
-- Circle client stub functionality
-- Event decoding and parameter validation
-- Chain identifier mapping
-- Amount formatting
+61/61 tests across 4 files:
+
+| File | Tests | What's covered |
+|------|-------|----------------|
+| `test/circleClient.test.ts` | 15 | Chain mapping, CCTP domain IDs, auth headers, stub/live branching, cross-chain flag |
+| `test/eventDecoding.test.ts` | 4 | `PayoutInstruction` ABI encoding/decoding, bytes32 chain labels, wei formatting |
+| `test/payoutStore.test.ts` | 25 | set/get/has, sorted getBatch, secondary-index correctness, overwrite semantics, cross-batch isolation; 8 persistence tests: ENOENT first-run, round-trip reload, Date deserialization, batchIndex rebuild, transferIndex rebuild, update persistence, debounce coalescing, no-filePath guard |
+| `test/batchSummary.test.ts` | 17 | `amountToMicro`, `formatMicro`, BigInt-vs-float divergence proof, `computeBatchSummary` correctness, performance benchmark |
+
+Type-check (0 errors):
+
+```bash
+npx tsc --noEmit
+```
 
 ## How It Works
 
-### Event Flow
+### Event flow
 
-1. **Contract Emits Event**: When a user creates a batch payout via `ArcFlowPayoutRouter.createBatchPayout()`, the contract emits a `PayoutInstruction` event for each recipient
+```
+1. User calls ArcFlowPayoutRouter.createBatchPayout() on-chain
+   ↓
+2. Contract transfers tokens, emits BatchCreated + one PayoutInstruction per recipient
+   ↓
+3. PayoutWorker detects PayoutInstruction event
+   • Decodes: batchId, index, recipient, amount (wei), destinationChain (bytes32)
+   • Maps bytes32 chain label → Circle chain name (e.g. BASE → BASE-SEPOLIA)
+   • Formats amount: wei (bigint) → human string (e.g. "100.000000")
+   • Generates idempotency key: arcflow_{batchId}-{index}_{txHash}
+   ↓
+4. circleClient.createTransfer() called
+   • CIRCLE_API_KEY absent → stub (logs, returns fake ID)
+   • CIRCLE_API_KEY set   → POST api.circle.com/v1/w3s/wallets/{id}/transfers (same-chain)
+   ↓
+5. PayoutStore.set() records status as QUEUED
+   • batchIndex updated (batch → Set<key>)
+   • transferIndex updated (circleTransferId → key)
+   • scheduleSave() debounces JSON write (200 ms) if PAYOUT_STORE_PATH set
+   ↓
+6. Circle webhook POST /webhooks/circle
+   • HMAC verified if CIRCLE_WEBHOOK_SECRET set
+   • PayoutStore.updateByCircleTransferId() → O(1) lookup via transferIndex
+   • Status updated to PROCESSING / COMPLETED / FAILED
+```
 
-2. **Worker Listens**: The payout worker is subscribed to these events via ethers.js
+### Circle integration
 
-3. **Event Processing**: For each event:
-   - Decode the event parameters (batchId, index, recipient, amount, destinationChain)
-   - Convert bytes32 chain identifier to Circle's format
-   - Format amount from wei to human-readable
-   - Generate idempotency key
+The client (`src/services/circleClient.ts`) gates on `CIRCLE_API_KEY`:
 
-4. **Circle Integration**: Call `circleClient.createTransfer()` with:
-   - Idempotency key (prevents duplicates)
-   - Amount and currency (`USDC` / `EURC`)
-   - Destination address and Circle chain name (e.g. `ARC-TESTNET`, `BASE-SEPOLIA`)
-   - CCTP domain ID for the destination chain
+**Stub mode (no API key):**
+- Logs request parameters
+- Returns `circle_transfer_{timestamp}_{random}` as `circleTransferId`
+- No HTTP calls — safe for local dev without credentials
 
-5. **Status Tracking**: Store the result in memory with status:
-   - `QUEUED`: Successfully sent to Circle
-   - `PROCESSING`: Circle is processing (future enhancement)
-   - `COMPLETED`: Circle completed the payout (future enhancement)
-   - `FAILED`: Error occurred
+**Live mode (API key set) — same-chain:**
+- `POST api.circle.com/v1/w3s/wallets/{walletId}/transfers`
+- Bearer auth with `CIRCLE_API_KEY`
+- Idempotency key in request body
 
-### Circle API Stub
+**Cross-chain (stub):**
+- BurnIntent / CCTP path not yet wired
+- Reference implementation: `circlefin/arc-multichain-wallet/lib/circle/gateway-sdk.ts → transferGatewayBalanceWithEOA`
 
-The Circle integration is currently a stub. Its design follows the patterns used in
-`circlefin/arc-multichain-wallet`, so switching to real Circle API calls is mostly a
-matter of swapping base URLs and API keys — no structural changes required.
+To go live with cross-chain:
+1. Implement EIP-712 BurnIntent signing
+2. `POST gateway-api-testnet.circle.com/v1/transfer` with signed intent
+3. Poll `GET /v1/transfers/{id}` or handle via webhook until confirmed
 
-- ✅ Uses `CIRCLE_API_KEY` + `CIRCLE_ENTITY_SECRET` (both validated at startup, matching arc-multichain-wallet)
-- ✅ Routes same-chain transfers to the Circle Wallets API (`CIRCLE_WALLETS_BASE_URL/transfers`)
-- ✅ Routes cross-chain transfers to the Circle Gateway API (`CIRCLE_GATEWAY_BASE_URL/transfer`)
-- ✅ Uses Circle's exact blockchain chain names (`ARC-TESTNET`, `BASE-SEPOLIA`, `AVAX-FUJI`, etc.)
-- ✅ Includes CCTP domain IDs per chain (required for Gateway burn-intent requests)
-- ✅ Idempotency keys formatted as `arcflow_{batchId}-{index}_{txHash}`
-- ⚠️ No actual HTTP calls — returns stub transfer IDs
-- ⚠️ EIP-712 BurnIntent signing (needed for cross-chain Gateway transfers) not yet implemented
+### Chain identifier mapping
 
-To go to production:
-1. Set real `CIRCLE_API_KEY` and `CIRCLE_ENTITY_SECRET` from the Circle Developer Console
-2. Replace the stub body in `circleClient.createTransfer()` with real `fetch` calls
-3. For cross-chain: add EIP-712 BurnIntent signing and `GET /transfers/{id}` polling
-   (reference: `arc-multichain-wallet/lib/circle/gateway-sdk.ts` → `transferGatewayBalanceWithEOA`)
-4. Add webhook handler at `POST /webhook/circle` to receive Circle status updates
+| Contract bytes32 | Circle chain name | CCTP domain |
+|-----------------|-------------------|-------------|
+| `ARC` | `ARC-TESTNET` | 5 |
+| `BASE` | `BASE-SEPOLIA` | 6 |
+| `AVAX` | `AVAX-FUJI` | 1 |
+| `ETH` | `ETH-SEPOLIA` | 0 |
+| `ARB` | `ARB-SEPOLIA` | 3 |
+| (unknown) | `ARC-TESTNET` | 5 (default) |
 
-## Chain Identifier Mapping
+Naming follows `circlefin/arc-multichain-wallet` conventions.
 
-The backend maps bytes32 chain labels (from `ArcFlowPayoutRouter`) to Circle's blockchain
-chain identifiers, following the naming convention used in `circlefin/arc-multichain-wallet`
-(`lib/circle/gateway-sdk.ts`). Circle uses hyphenated, network-qualified names on testnet.
+### PayoutStore persistence
 
-| Contract bytes32 | Circle chain name | CCTP domain ID | Notes                             |
-|------------------|-------------------|----------------|-----------------------------------|
-| ARC              | ARC-TESTNET       | 5              | Home chain — was incorrectly "ETH"|
-| BASE             | BASE-SEPOLIA      | 6              | Base testnet                      |
-| AVAX / AVALANCHE | AVAX-FUJI         | 1              | Avalanche testnet                 |
-| ETH / ETHEREUM   | ETH-SEPOLIA       | 0              | Ethereum testnet                  |
-| ARB / ARBITRUM   | ARB-SEPOLIA       | 3              | Arbitrum testnet                  |
-| (unknown)        | ARC-TESTNET       | 5              | Default fallback (home chain)     |
-
-USYC (Hashnote tokenized US Treasury yield token) is available on Arc testnet at
-`usyc.dev.hashnote.com`. Holders can convert USDC ↔ USYC via the Subscribe/Redeem panels.
-USYC is accepted as a source token by `ArcFlowPayoutRouter`; Circle's cross-chain routes
-use USDC/EURC as the settlement asset.
+When `PAYOUT_STORE_PATH` is set:
+- On startup: reads JSON file, deserialises entries, rebuilds `batchIndex` and `transferIndex`
+- On write: 200 ms debounce coalesces burst writes into a single `fs.promises.writeFile` call
+- On `ENOENT` (first run): starts with empty store, creates file on first write
 
 ## Logging
 
-Logs are written to:
-- **Console**: Colorized, human-readable (development)
-- **combined.log**: All logs (JSON format)
-- **error.log**: Errors only (JSON format)
+Logs written to:
+- **Console** — colorised, human-readable (development)
+- **combined.log** — all levels (JSON format)
+- **error.log** — errors only (JSON format)
 
-Log levels: `error`, `warn`, `info`, `debug`
-
-Set via `LOG_LEVEL` environment variable.
-
-## Future Enhancements
-
-- [ ] Database integration (PostgreSQL/MongoDB) for persistent storage
-- [ ] Real Circle API integration with authentication
-- [ ] Webhook listener for Circle status updates
-- [ ] Retry logic with exponential backoff
-- [ ] Batch processing optimization
-- [ ] Metrics and monitoring (Prometheus)
-- [ ] Rate limiting for API endpoints
-- [ ] Authentication/authorization for API
+Set log level via `LOG_LEVEL` env var (default: `info`).
 
 ## Troubleshooting
 
 **Worker not starting:**
-- Check `ARC_TESTNET_RPC_URL` is valid
-- Verify `ARC_PAYOUT_ROUTER_ADDRESS` is correct
-- Ensure RPC endpoint is accessible
+- Check `ARC_TESTNET_RPC_URL` is reachable: `curl <YOUR_RPC_URL>`
+- Verify `ARC_PAYOUT_ROUTER_ADDRESS` is correct (matches deployed contract)
 
 **No events detected:**
-- Verify the contract has emitted events
-- Check if historical event fetching succeeded
-- Try lowering the `fromBlock` value in the worker
+- Confirm batch payout transaction was mined (check `testnet.arcscan.app`)
+- Confirm router address in `.env` matches deployed address
 
-**API returning 404:**
-- Worker must be running to track payouts
-- Batch ID must match an on-chain batch
-- Try the `/status` endpoint to verify server is running
+**API returning 404 for a batch:**
+- Worker must be running when the batch is created (events are not replayed after worker restart unless historical range covers them)
+- Check worker logs for `PayoutInstruction` event processing
+
+**Circle webhook rejected (401):**
+- Verify `CIRCLE_WEBHOOK_SECRET` matches the secret configured in the Circle Developer Console
+- Leave blank to accept webhooks without verification (dev only)
 
 ## Related Packages
 
-- **Root (contracts)**: Smart contracts for ArcFlow Treasury
-- **arcflow-frontend**: Web UI (to be implemented)
+- **Root** — Smart contracts (`ArcFlowEscrow`, `ArcFlowStreams`, `ArcFlowPayoutRouter`)
+- **arcflow-frontend** — React SPA wired to real contracts via ethers v6
 
 ## License
 
 MIT
-
-## Support
-
-For questions or issues, please refer to the main project documentation.

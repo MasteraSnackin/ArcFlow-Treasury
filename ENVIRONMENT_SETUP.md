@@ -1,126 +1,201 @@
-# Environment Setup – ArcFlow Treasury
+# Environment Setup — ArcFlow Treasury
 
-This document describes how to set up local environments for contracts, backend, and frontend.
-
-## 1. Common Requirements
-
-- Node.js LTS (18.x or 20.x)
-- npm
-- Git
-- Access to an Arc testnet RPC URL
-- Arc testnet wallet with:
-  - Native gas (if required by the network)
-  - USDC/EURC test tokens, or a custom ERC‑20 used as USDC
-
-> Note: Replace `<PLACEHOLDER>` values below with real URLs, keys, or addresses.
+This document describes how to configure local environments for all three packages: contracts (root), backend, and frontend.
 
 ---
 
-## 2. Contracts Environment (`arcflow-contracts`)
+## Common Requirements
 
-### 2.1 Install Dependencies
+- Node.js LTS (18.x or 20.x recommended)
+- npm 9+
+- A MetaMask wallet configured for Arc Testnet:
+  - **Network name**: Arc Testnet
+  - **RPC URL**: your Arc Testnet RPC endpoint
+  - **Chain ID**: `5042002`
+  - **Currency symbol**: USDC (gas is paid in USDC on Arc)
+- USDC and/or EURC test tokens — obtain from [faucet.circle.com](https://faucet.circle.com/) (select **Arc Testnet**)
+
+> Replace `<PLACEHOLDER>` values below with your actual URLs, keys, or addresses.
+
+---
+
+## 1. Contracts Environment (root package)
+
+### Install
 
 ```bash
-cd arcflow-contracts
+# From project root
 npm install
 ```
 
-### 2.2 Configure `.env`
+### Configure `.env`
 
-Create `arcflow-contracts/.env`:
+Create `.env` at the project root (or copy from `.env.example`):
 
-```bash
-ARC_RPC_URL=https://<your-arc-testnet-rpc>
-ARC_PRIVATE_KEY=0xYOUR_PRIVATE_KEY_WITH_TEST_FUNDS
+```env
+# Arc Testnet
+ARC_TESTNET_RPC_URL=https://<your-arc-testnet-rpc>
+ARC_PRIVATE_KEY=0x<64-hex-chars>   # Must be exactly 0x + 64 hex characters
+
+# Protocol fee configuration for ArcFlowEscrow
+ARC_FEE_COLLECTOR=0x<fee-collector-address>  # Leave empty to use the deployer address
+ARC_FEE_BPS=0                                 # Basis points: 0 = no fee, 100 = 1%
 ```
 
-### 2.3 Compile and Deploy
+### Compile and Deploy
 
 ```bash
-npx hardhat compile
+# Compile Solidity
+npm run compile
+
+# Deploy all three contracts to Arc Testnet
 npm run deploy:arc
 ```
 
-Record the printed addresses for:
-
-- `ArcFlowEscrow`
-- `ArcFlowStreams`
-- `ArcFlowPayoutRouter`
+The deploy script prints the three contract addresses and suggested environment variable values for the frontend and backend. **Save these addresses.**
 
 ---
 
-## 3. Backend Environment (`arcflow-backend`)
+## 2. Backend Environment (`arcflow-backend/`)
 
-### 3.1 Install Dependencies
+### Install
 
 ```bash
 cd arcflow-backend
 npm install
 ```
 
-### 3.2 Configure `.env`
-
-Create `arcflow-backend/.env`:
+### Configure `.env`
 
 ```bash
-PORT=3000
-ARC_RPC_URL=https://<your-arc-testnet-rpc>
-ARC_PAYOUT_ROUTER_ADDRESS=0x...   # ArcFlowPayoutRouter from deployment
-# CIRCLE_API_KEY=<OPTIONAL_CIRCLE_API_KEY_FOR_FUTURE_INTEGRATION>
+cd arcflow-backend
+cp .env.example .env
 ```
 
-### 3.3 Run Services
+`arcflow-backend/.env`:
+
+```env
+# Arc Testnet (required for event worker)
+ARC_TESTNET_RPC_URL=https://<your-arc-testnet-rpc>
+ARC_PAYOUT_ROUTER_ADDRESS=0x...   # ArcFlowPayoutRouter from deployment
+
+# Server
+PORT=3000
+
+# Circle API
+# Leave blank → stub mode (returns fake transfer IDs; good for local dev)
+# Set CIRCLE_API_KEY → live same-chain routing via Circle Wallets API
+CIRCLE_API_KEY=
+CIRCLE_WALLET_ID=                 # required when CIRCLE_API_KEY is set
+CIRCLE_ENTITY_SECRET=             # Developer Controlled Wallets SDK (optional)
+CIRCLE_WEBHOOK_SECRET=            # HMAC-SHA256 key for webhook verification (optional)
+
+# Payout state persistence
+# Leave blank → payout state is lost on restart (fine for demos)
+# Set a path → payout state is written to JSON and reloaded on startup
+PAYOUT_STORE_PATH=./data/payouts.json
+```
+
+### Run
 
 ```bash
-# Terminal 1 – HTTP API
+# Terminal 1 — HTTP API + event worker
 npm run dev:server
 
-# Terminal 2 – Event listener worker
+# Terminal 2 — event worker only (no HTTP API)
 npm run dev:worker
 ```
 
-Verify:
-
-- `GET http://localhost:3000/status` returns `{ "status": "ok", ... }`.
+Verify: `GET http://localhost:3000/status` → `{ "status": "ok" }`
 
 ---
 
-## 4. Frontend Environment (`arcflow-frontend`)
+## 3. Frontend Environment (`arcflow-frontend/`)
 
-### 4.1 Install Dependencies
+### Install
 
 ```bash
 cd arcflow-frontend
 npm install
 ```
 
-### 4.2 Configure `.env`
-
-Create `arcflow-frontend/.env` or `.env.local`:
+### Configure `.env`
 
 ```bash
-VITE_ARC_ESCROW_ADDRESS=0x...           # ArcFlowEscrow address
-VITE_ARC_STREAM_ADDRESS=0x...           # ArcFlowStreams address
-VITE_ARC_PAYOUT_ROUTER_ADDRESS=0x...    # ArcFlowPayoutRouter address
-VITE_USDC_ADDRESS=0x...                 # USDC (or test token) on Arc
-VITE_BACKEND_URL=http://localhost:3000
+cd arcflow-frontend
+cp .env.example .env
 ```
 
-Ensure your wallet is configured for Arc testnet and has USDC/EURC.
+`arcflow-frontend/.env`:
 
-### 4.3 Run the Frontend
+```env
+# Contract addresses (from deployment step)
+VITE_ARC_ESCROW_ADDRESS=0x...           # ArcFlowEscrow address
+VITE_ARC_STREAMS_ADDRESS=0x...          # ArcFlowStreams address
+VITE_ARC_PAYOUT_ROUTER_ADDRESS=0x...    # ArcFlowPayoutRouter address
+
+# Token addresses on Arc Testnet
+VITE_USDC_ADDRESS=0x...                 # USDC ERC-20 on Arc Testnet
+VITE_EURC_ADDRESS=0x...                 # EURC ERC-20 on Arc Testnet
+```
+
+> **Note**: All `VITE_` variables are baked into the build at compile time. After editing `.env`, restart `npm run dev` for changes to take effect.
+
+### Run
 
 ```bash
 npm run dev
+# → http://localhost:5173
 ```
 
-Open the printed URL (e.g. `http://localhost:5173`) in your browser.
+### Type check
+
+```bash
+npx tsc --noEmit   # must return 0 errors
+```
+
+---
+
+## 4. Environment Variable Reference
+
+### Root `.env` (Hardhat / Contracts)
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `ARC_TESTNET_RPC_URL` | Yes | JSON-RPC HTTP endpoint for Arc Testnet |
+| `ARC_PRIVATE_KEY` | Yes | Deployer wallet private key (`0x` + 64 hex chars) |
+| `ARC_FEE_COLLECTOR` | Optional | Address receiving protocol fees; defaults to deployer if omitted |
+| `ARC_FEE_BPS` | Optional | Fee in basis points; `0` = no fee |
+
+### `arcflow-backend/.env`
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `ARC_TESTNET_RPC_URL` | Yes (worker) | JSON-RPC endpoint for Arc Testnet |
+| `ARC_PAYOUT_ROUTER_ADDRESS` | Yes (worker) | Deployed `ArcFlowPayoutRouter` address |
+| `PORT` | Optional | HTTP server port (default: `3000`) |
+| `CIRCLE_API_KEY` | Optional | Set to enable live same-chain Circle routing |
+| `CIRCLE_WALLET_ID` | Required if API key set | Circle wallet to fund transfers from |
+| `CIRCLE_ENTITY_SECRET` | Optional | Developer Controlled Wallets SDK init secret |
+| `CIRCLE_WEBHOOK_SECRET` | Optional | HMAC-SHA256 secret for webhook verification |
+| `PAYOUT_STORE_PATH` | Optional | File path for JSON payout state (e.g. `./data/payouts.json`) |
+
+### `arcflow-frontend/.env`
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `VITE_ARC_ESCROW_ADDRESS` | After deploy | `ArcFlowEscrow` contract address |
+| `VITE_ARC_STREAMS_ADDRESS` | After deploy | `ArcFlowStreams` contract address |
+| `VITE_ARC_PAYOUT_ROUTER_ADDRESS` | After deploy | `ArcFlowPayoutRouter` contract address |
+| `VITE_USDC_ADDRESS` | Yes | USDC ERC-20 address on Arc Testnet |
+| `VITE_EURC_ADDRESS` | Yes | EURC ERC-20 address on Arc Testnet |
 
 ---
 
 ## 5. Known Pitfalls
 
-- **Approvals:** ERC‑20 allowances must be granted for each contract (Escrow, Streams, Router) before funding operations.
-- **Chain ID mismatches:** Ensure your wallet network matches the Arc testnet RPC used in `.env`.
-- **USDC address:** Use the correct USDC/EURC testnet address or a deployed test token; wrong addresses will cause transfers to fail.
-
+- **ERC-20 approvals**: Each contract (`ArcFlowEscrow`, `ArcFlowStreams`, `ArcFlowPayoutRouter`) requires a separate ERC-20 allowance. The frontend's `approveIfNeeded()` handles this automatically, checking the allowance before calling `approve()`.
+- **Chain ID mismatch**: If MetaMask is on the wrong network, the UI will warn and offer to auto-switch to Arc Testnet (Chain ID `5042002`).
+- **Wrong USDC address**: Using a wrong token address causes transfers to fail silently or revert. Always use the official USDC/EURC addresses for Arc Testnet.
+- **VITE_ variable not loaded**: If a contract address appears blank in the UI, restart the Vite dev server after editing `.env`.
+- **Private key format**: `ARC_PRIVATE_KEY` must be exactly `0x` followed by 64 hex characters (66 total). Keys exported from MetaMask as a plain hex string need `0x` prepended.

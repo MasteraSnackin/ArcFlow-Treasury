@@ -1,107 +1,131 @@
-# Testing – ArcFlow Treasury
+# Testing — ArcFlow Treasury
 
-This document outlines the testing approach for the ArcFlow Treasury project.
+This document describes the testing approach, current coverage, and how to run tests for each package.
 
-## 1. Contract Tests (Hardhat)
+---
 
-Smart contract tests are written using Hardhat’s Mocha/Chai test runner.
+## 1. Contract Tests (Hardhat + Chai)
 
-### 1.1 Running Tests
-
-From the `arcflow-contracts` directory:
+**31 tests — all passing**
 
 ```bash
+# From project root
 npm test
-```
-
-or explicitly:
-
-```bash
+# or
 npx hardhat test
 ```
 
-### 1.2 Suggested Test Coverage
+### Coverage
 
-- **ArcFlowEscrow**
-  - Create escrow with valid inputs.
-  - Reject invalid inputs (zero amount, past expiry, zero addresses).
-  - Auto‑release after expiry transfers funds to payee.
-  - Dispute and resolve in favour of payee.
-  - Dispute and resolve in favour of payer (refund).
-  - Fee logic: verify feeCollector receives the correct fraction.
-
-- **ArcFlowStreams**
-  - Create stream with valid parameters (start, cliff, end).
-  - Vesting behaviour before cliff (0), between cliff and end (partial), and after end (full).
-  - Withdraw once and ensure `withdrawn` is updated.
-  - Revoke: vested portion to employee, unvested refunded to employer.
-
-- **ArcFlowPayoutRouter**
-  - Revert on mismatched array lengths.
-  - Revert on zero‑total batches.
-  - Successful batch: total transferred and `PayoutInstruction` events emitted.
-
-> Note: You can use a simple test token (e.g. `TestUSDC.sol`) for unit tests.
+| Suite | Tests | Scenarios |
+|-------|-------|-----------|
+| `ArcFlowEscrow` | 10 | Create escrow; revert on zero address / zero amount / past expiry; auto-release after expiry; auto-release reverts before expiry; raise dispute (payer and payee); reject dispute from non-participant; resolve → payee; resolve → refund payer; reject non-arbitrator resolution; fee deduction (feeCollector receives correct amount) |
+| `ArcFlowStreams` | 12 | Create stream; revert on invalid params; vesting at 0% (before cliff); vesting at 50% (mid-stream); vesting at 100% (after end); employee withdrawal; reject non-employee withdrawal; reject withdrawal when nothing vested; employer revocation with pro-rata split; reject non-employer revocation; withdrawn tracking; revoke after partial withdrawal |
+| `ArcFlowPayoutRouter` | 9 | Create batch successfully; emit `PayoutInstruction` events (3 recipients); batch ID increments; revert on empty recipients; revert on array length mismatch; revert on zero total; handle large batch (10 recipients); return correct batch ID; verify event count matches recipients |
 
 ---
 
-## 2. Backend Tests
+## 2. Backend Tests (Vitest)
 
-The backend currently focuses on:
+**61 tests — all passing**
 
-- Event ingestion from the router contract.
-- HTTP endpoints for status and payout queries.
+```bash
+cd arcflow-backend
+npm test
+```
 
-### 2.1 Approaches
+### Coverage
 
-- Unit tests (Jest or Mocha) for:
-  - `GET /status`
-  - `GET /payouts/:batchId/status` with mock in‑memory data.
-- Integration tests (future):
-  - Simulate `PayoutInstruction` events and assert payout store updates.
-  - Mock Circle webhooks to verify status changes.
+| File | Tests | What's covered |
+|------|-------|----------------|
+| `test/circleClient.test.ts` | 15 | Chain identifier mapping (`ARC→ARC-TESTNET`, `BASE→BASE-SEPOLIA`, etc.); CCTP domain IDs; cross-chain flag detection; stub mode response shape; auth header injection; unknown chain default |
+| `test/eventDecoding.test.ts` | 4 | `PayoutInstruction` ABI event encoding and decoding; bytes32 chain label round-trip; amount formatting (wei → 6-decimal string); event signature validation |
+| `test/payoutStore.test.ts` | 25 | `set()` / `get()` / `has()`; `getBatch()` returns entries sorted by index; secondary-index correctness (`batchIndex` + `transferIndex`); overwrite semantics; cross-batch isolation; `updateByCircleTransferId()` happy path, not-found, PROCESSING clear; index invalidation on overwrite; **+8 file-persistence tests**: ENOENT first-run (no crash), round-trip reload (values preserved), `Date` fields deserialised as `Date` objects, `batchIndex` rebuilt on load, `transferIndex` rebuilt on load, status changes persist and reload correctly, rapid `set()` calls coalesce into one file write, no file write when `PAYOUT_STORE_PATH` not set |
+| `test/batchSummary.test.ts` | 17 | `amountToMicro()` exact integer parsing; `formatMicro()` round-trip; BigInt vs float divergence proof (shows why float arithmetic drifts on large totals); `computeBatchSummary()` correctness (status counts, total, ready flag); edge cases (empty batch, all-failed, mixed); performance benchmark (single-pass integer ~1.9× faster than 5-pass float for N=5 000 × 200 runs) |
 
-> At present, backend tests are not fully implemented; they are recommended as follow‑up work.
+### Type check
+
+```bash
+cd arcflow-backend
+npx tsc --noEmit
+```
+
+0 errors.
 
 ---
 
-## 3. Frontend Tests
+## 3. Frontend Type Check
 
-The React SPA can be tested with:
+```bash
+cd arcflow-frontend
+npx tsc --noEmit
+```
 
-- Component/unit tests (e.g. Vitest + React Testing Library).
-- Basic E2E tests (e.g. Playwright or Cypress) for the three main flows.
-
-### 3.1 Suggested Tests
-
-- EscrowPage:
-  - Renders form and handles basic validation.
-  - Calls contract methods correctly when creating an escrow (with contract calls mocked).
-
-- StreamsPage:
-  - Displays withdrawable amounts correctly when provided with mock data.
-  - Calls `withdraw` handler when clicking the button.
-
-- PayoutsPage:
-  - Renders dynamic list of recipients.
-  - Calls backend `GET /payouts/:batchId/status` and renders statuses.
+0 errors. The frontend does not currently have a component or E2E test suite.
 
 ---
 
 ## 4. Manual Testing Checklist
 
-For hackathon/demo scenarios, validate the following manually:
+For hackathon/demo validation, run through each flow manually with MetaMask connected to Arc Testnet (Chain ID 5042002).
 
-- Escrow:
-  - Create an escrow, view it by ID, and verify status transitions.
-  - Dispute and resolve flows.
-  - Auto‑release after expiry.
+### Escrow flow
 
-- Streams:
-  - Create a stream, wait for some vesting, and withdraw as employee.
-  - Optionally, revoke as employer and confirm split.
+- [ ] Create an escrow (fill payee, token, amount, expiry, optional arbitrator) → MetaMask prompts ERC-20 approval then `createEscrow`
+- [ ] Created escrow appears in **My Escrows** list; click to auto-load
+- [ ] Load escrow by ID; verify payer, payee, amount, expiry, status display correctly
+- [ ] As payer or payee: click **Raise Dispute** → 2-step confirmation → status updates to `DISPUTED`
+- [ ] As arbitrator: **Resolve → Pay Payee** and **Resolve → Refund Payer** both work
+- [ ] After expiry: **Auto Release** button visible and functional
 
-- Payouts:
-  - Create a small batch and verify a `QUEUED` status in the UI from the backend.
+### Payroll / Vesting flow
 
-Capture screenshots or a short video of each flow for documentation and debugging.
+- [ ] Create a stream (employee address, amount, start/cliff/end offsets) → MetaMask approval + `createStream`
+- [ ] Created stream appears in **My Streams** list
+- [ ] Load stream by ID; verify vesting progress bar and withdrawable amount displayed
+- [ ] As employee: **Withdraw Now** sends transaction; withdrawn balance updates
+- [ ] As employer: **Revoke Stream** → 2-step confirmation → `revoke()` called on-chain
+
+### Payout Batches flow
+
+- [ ] Create a batch (token, multiple recipients each with amount + chain) → MetaMask approval + `createBatchPayout`
+- [ ] Created batch appears in **My Batches** list with real on-chain batch ID
+- [ ] Backend logs show `PayoutInstruction` event detected → Circle stub called → status `QUEUED`
+- [ ] Load batch by ID in status viewer; payout table shows all recipients with correct status
+- [ ] Status refreshes automatically every 30 s (or manually via Refresh button)
+
+### Dashboard
+
+- [ ] Locked-in-escrows metric reflects escrows created in session
+- [ ] Locked-in-streams metric reflects streams created in session
+- [ ] Pending batches metric reflects batches created in session
+- [ ] Recent Activity lists most-recent items across all three types
+
+### Network + wallet
+
+- [ ] Connecting a wallet on the wrong network shows warning + "Switch to Arc Testnet" prompt
+- [ ] Backend offline → API health indicator shows "Offline" in topbar
+- [ ] Backend online → indicator shows "API: OK"
+
+---
+
+## 5. Running Everything
+
+```bash
+# Terminal 1 — contracts
+npm test
+
+# Terminal 2 — backend
+cd arcflow-backend && npm test
+
+# Terminal 3 — frontend type check
+cd arcflow-frontend && npx tsc --noEmit
+
+# Terminal 4 — backend server (for manual testing)
+cd arcflow-backend && npm run dev:server
+
+# Terminal 5 — frontend dev server
+cd arcflow-frontend && npm run dev
+```
+
+Total automated: **31 + 61 = 92 tests**, 0 TypeScript errors.

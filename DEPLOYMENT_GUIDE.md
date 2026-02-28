@@ -1,57 +1,59 @@
-# ArcFlow Treasury - Deployment Guide
+# ArcFlow Treasury — Deployment Guide
 
-Complete step-by-step guide to deploy and run ArcFlow Treasury on Arc testnet.
+Complete step-by-step guide to deploy and run ArcFlow Treasury on Arc Testnet.
 
 ## Prerequisites Checklist
 
-- [ ] Node.js 18+ installed
-- [ ] Git installed (optional)
-- [ ] Arc testnet account created
-- [ ] Arc testnet wallet funded with native tokens for gas
-- [ ] Arc testnet RPC URL obtained
-- [ ] Test USDC/EURC token addresses on Arc testnet
+- [ ] Node.js 18+ installed (`node --version`)
+- [ ] Arc testnet wallet funded with USDC (gas token on Arc)
+- [ ] Arc testnet RPC URL
+- [ ] USDC and EURC token addresses on Arc Testnet
 
 ---
 
 ## Step 1: Initial Setup
 
-### Clone/Download Project
+### Clone the repository
 
 ```bash
-cd "ArcFlow Treasury"
+git clone https://github.com/MasteraSnackin/ArcFlow-Treasury.git
+cd ArcFlow-Treasury
 ```
 
-### Install Dependencies
+### Install all dependencies
 
 ```bash
-# Install contract dependencies
-npm install
+npm install                                    # contracts (root)
+cd arcflow-backend && npm install && cd ..     # backend
+cd arcflow-frontend && npm install && cd ..    # frontend
+```
 
-# Install backend dependencies
-cd arcflow-backend
-npm install
-cd ..
+### Verify setup
+
+```bash
+npm run verify-setup
 ```
 
 ---
 
-## Step 2: Configure Environment
+## Step 2: Configure Root Environment (Contracts)
 
-### Root `.env` (Contracts)
-
-Create/edit `.env` in the project root:
+Create `.env` in the project root:
 
 ```bash
-# Arc Testnet Configuration
-ARC_TESTNET_RPC_URL=https://your-arc-testnet-rpc-url
-ARC_PRIVATE_KEY=0xYourPrivateKeyWithTestFunds
-
-# Optional: Fee configuration for ArcFlowEscrow
-ARC_FEE_COLLECTOR=0xYourFeeCollectorAddress  # Leave empty to use deployer
-ARC_FEE_BPS=100  # 100 basis points = 1%
+cp .env.example .env
 ```
 
-**Security Warning**: Never commit your `.env` file or share your private key!
+Edit `.env`:
+
+```env
+ARC_TESTNET_RPC_URL=https://your-arc-testnet-rpc-url
+ARC_PRIVATE_KEY=0xYourPrivateKeyWithTestFunds   # 0x + 64 hex chars
+ARC_FEE_COLLECTOR=0xYourFeeCollectorAddress     # address that receives protocol fees
+ARC_FEE_BPS=0                                   # 0 = no fee; 100 = 1%
+```
+
+> **Never commit your `.env` file.** It is in `.gitignore`.
 
 ---
 
@@ -61,12 +63,12 @@ ARC_FEE_BPS=100  # 100 basis points = 1%
 npm run compile
 ```
 
-**Expected Output:**
+Expected output:
 ```
 Compiled 4 Solidity files successfully (evm target: paris).
 ```
 
-**Verify TypeScript types were generated:**
+Verify TypeScript types were generated:
 ```bash
 ls typechain-types/
 ```
@@ -79,12 +81,12 @@ ls typechain-types/
 npm test
 ```
 
-**Expected Output:**
+Expected output:
 ```
   31 passing (2s)
 ```
 
-If all tests pass, you're ready to deploy! ✅
+All 31 tests must pass before deploying.
 
 ---
 
@@ -94,234 +96,189 @@ If all tests pass, you're ready to deploy! ✅
 npm run deploy:arc
 ```
 
-**Expected Output:**
+Expected output:
 ```
 Deploying contracts with: 0xYourAddress
 Escrow feeCollector: 0xYourAddress
-Escrow feeBps: 100
+Escrow feeBps: 0
 
-ArcFlowEscrow deployed to: 0xABCD...1234
-ArcFlowStreams deployed to: 0xEF56...7890
+ArcFlowEscrow deployed to:      0xABCD...1234
+ArcFlowStreams deployed to:     0xEF56...7890
 ArcFlowPayoutRouter deployed to: 0x1234...ABCD
 
 Env values for frontend/backend:
-VITE_ARC_ESCROW_ADDRESS= 0xABCD...1234
-VITE_ARC_STREAM_ADDRESS= 0xEF56...7890
+VITE_ARC_ESCROW_ADDRESS=  0xABCD...1234
+VITE_ARC_STREAMS_ADDRESS= 0xEF56...7890
 VITE_ARC_PAYOUT_ROUTER_ADDRESS= 0x1234...ABCD
 ```
 
-**⚠️ IMPORTANT: Save these addresses!** You'll need them for the backend.
+**Save these addresses.** You need them in the next two steps.
 
 ---
 
 ## Step 6: Configure Backend
-
-### Create Backend `.env`
 
 ```bash
 cd arcflow-backend
 cp .env.example .env
 ```
 
-### Edit `arcflow-backend/.env`
+Edit `arcflow-backend/.env`:
 
-```bash
-# Arc Testnet Configuration
+```env
+# Arc Testnet
 ARC_TESTNET_RPC_URL=https://your-arc-testnet-rpc-url
-ARC_PAYOUT_ROUTER_ADDRESS=0x1234...ABCD  # From deployment step
+ARC_PAYOUT_ROUTER_ADDRESS=0x1234...ABCD       # from Step 5
 
-# Server Configuration
+# Server
 PORT=3000
-NODE_ENV=development
 
-# Circle API Configuration (stubbed for now)
-CIRCLE_API_KEY=stub_key_not_required_yet
-CIRCLE_ENTITY_SECRET=stub_secret_not_required_yet
+# Circle API
+# Leave blank → stub mode (prints fake IDs, good for local dev)
+# Set a real key → live same-chain routing via Circle Wallets API
+CIRCLE_API_KEY=
+CIRCLE_WALLET_ID=                              # required when CIRCLE_API_KEY is set
+CIRCLE_ENTITY_SECRET=                          # Developer Controlled Wallets SDK (optional)
+CIRCLE_WEBHOOK_SECRET=                         # HMAC key for webhook verification (optional)
 
-# Logging
-LOG_LEVEL=info
+# Persistence
+# Leave blank → payouts are lost on restart (fine for dev/demo)
+# Set a path → payouts survive restarts; directory must exist
+PAYOUT_STORE_PATH=./data/payouts.json
 ```
 
 ---
 
-## Step 7: Test Backend
+## Step 7: Configure Frontend
 
 ```bash
-# Still in arcflow-backend/
+cd arcflow-frontend
+cp .env.example .env
+```
+
+Edit `arcflow-frontend/.env`:
+
+```env
+VITE_ARC_ESCROW_ADDRESS=0xABCD...1234          # from Step 5
+VITE_ARC_STREAMS_ADDRESS=0xEF56...7890         # from Step 5
+VITE_ARC_PAYOUT_ROUTER_ADDRESS=0x1234...ABCD  # from Step 5
+VITE_USDC_ADDRESS=0x...                        # USDC on Arc Testnet
+VITE_EURC_ADDRESS=0x...                        # EURC on Arc Testnet
+```
+
+---
+
+## Step 8: Run Backend Tests
+
+```bash
+cd arcflow-backend
 npm test
 ```
 
-**Expected Output:**
+Expected output:
 ```
-✓ test/circleClient.test.ts (8 tests)
-✓ test/eventDecoding.test.ts (4 tests)
-
-Test Files  2 passed (2)
-Tests  12 passed (12)
+Test Files  4 passed (4)
+Tests       61 passed (61)
 ```
 
 ---
 
-## Step 8: Start Backend
+## Step 9: Start Backend
 
-### Option A: Worker Only (Event Listener)
+### Option A: Server + Worker (recommended)
+
+```bash
+cd arcflow-backend
+npm run dev:server
+```
+
+Expected output:
+```
+2026-02-28 10:00:00 [info]: PayoutWorker initialized {...}
+2026-02-28 10:00:00 [info]: Connected to network {"chainId":"5042002"}
+2026-02-28 10:00:00 [info]: Fetching historical events {...}
+2026-02-28 10:00:00 [info]: Found 0 historical PayoutInstruction events
+2026-02-28 10:00:00 [info]: PayoutWorker: Listening for new events...
+2026-02-28 10:00:00 [info]: Server running on port 3000
+```
+
+### Option B: Worker only (no HTTP API)
 
 ```bash
 npm run dev:worker
 ```
 
-**Expected Output:**
-```
-2026-02-27 10:00:00 [info]: PayoutWorker initialized {...}
-2026-02-27 10:00:00 [info]: Connected to network {"chainId":"5042002"}
-2026-02-27 10:00:00 [info]: Fetching historical events {...}
-2026-02-27 10:00:00 [info]: Found 0 historical PayoutInstruction events
-2026-02-27 10:00:00 [info]: PayoutWorker: Listening for new events...
-```
-
-### Option B: Server + Worker (API + Event Listener)
-
-```bash
-npm run dev:server
-```
-
-**Expected Output:**
-```
-2026-02-27 10:00:00 [info]: PayoutWorker initialized {...}
-2026-02-27 10:00:00 [info]: Server running on port 3000
-2026-02-27 10:00:00 [info]: Health check: http://localhost:3000/status
-```
-
 ---
 
-## Step 9: Verify Backend is Running
-
-Open a new terminal and test the API:
+## Step 10: Verify Backend is Running
 
 ```bash
-# Health check
 curl http://localhost:3000/status
+```
 
-# Should return:
-{
-  "status": "OK",
-  "timestamp": "2026-02-27T10:00:00.000Z",
-  "service": "arcflow-backend"
-}
+Expected:
+```json
+{ "status": "ok", "network": "arc-testnet" }
 ```
 
 ---
 
-## Step 10: Test End-to-End Flow
-
-### 10.1: Prepare Test Tokens
-
-You'll need test USDC/EURC on Arc testnet. Options:
-- Use Arc testnet faucet
-- Deploy your own test token
-- Use existing test token addresses
-
-### 10.2: Create a Test Batch Payout
-
-Using Hardhat console:
+## Step 11: Start Frontend
 
 ```bash
-# From project root
-npx hardhat console --network arcTestnet
+cd arcflow-frontend
+npm run dev
 ```
 
-```javascript
-// In console:
-const Router = await ethers.getContractFactory("ArcFlowPayoutRouter");
-const router = Router.attach("0xYourDeployedRouterAddress");
+Open `http://localhost:5173` in your browser.
 
-// Approve tokens first
-const TestToken = await ethers.getContractAt(
-  "IERC20",
-  "0xYourTestTokenAddress"
-);
-await TestToken.approve(router.address, ethers.parseUnits("1000", 6));
+1. Click **Connect Wallet** — MetaMask will prompt.
+2. If your wallet is not on Arc Testnet (Chain ID 5042002) the UI will warn and offer to switch.
+3. Use the USDC faucet at [faucet.circle.com](https://faucet.circle.com/) (select Arc Testnet) to fund your wallet.
 
-// Create batch payout
-const recipients = [
-  "0xRecipient1Address",
-  "0xRecipient2Address",
-  "0xRecipient3Address"
-];
-const amounts = [
-  ethers.parseUnits("100", 6),
-  ethers.parseUnits("200", 6),
-  ethers.parseUnits("300", 6)
-];
-const chains = [
-  ethers.encodeBytes32String("ARC"),
-  ethers.encodeBytes32String("BASE"),
-  ethers.encodeBytes32String("POLYGON")
-];
+---
 
-const tx = await router.createBatchPayout(
-  "0xYourTestTokenAddress",
-  recipients,
-  amounts,
-  chains
-);
-await tx.wait();
+## Step 12: End-to-End Test
 
-console.log("Batch created! Check backend logs.");
-```
+### Create a batch payout via UI
 
-### 10.3: Check Backend Logs
+1. Navigate to **Payout Batches** → **New Batch Payout**.
+2. Add recipients, amounts, and destination chains (`ARC`, `BASE`, `AVAX`, `ETH`, `ARB`).
+3. Confirm the ERC-20 approval + `createBatchPayout` MetaMask transactions.
+4. Note the batch ID shown in the **My Batches** panel.
+
+### Check backend logs
 
 You should see:
-
 ```
-2026-02-27 10:05:00 [info]: Processing PayoutInstruction event {
-  batchId: "0",
-  index: "0",
-  recipient: "0xRecipient1Address",
-  amount: "100000000",
-  destinationChain: "ARC",
-  ...
-}
-2026-02-27 10:05:00 [info]: Circle API (STUB): Creating payout instruction {...}
-2026-02-27 10:05:00 [info]: Payout instruction created successfully {
-  payoutKey: "0-0",
-  circlePayoutId: "circle_payout_...",
-  status: "QUEUED"
-}
+2026-02-28 10:05:00 [info]: Processing PayoutInstruction event {batchId:"0",index:0,...}
+2026-02-28 10:05:00 [info]: Circle API (STUB): Creating transfer {...}
+2026-02-28 10:05:00 [info]: Payout created successfully {payoutKey:"0-0",circleTransferId:"circle_transfer_...",status:"QUEUED"}
 ```
 
-### 10.4: Query Batch Status via API
+### Query batch status via API
 
 ```bash
 curl http://localhost:3000/payouts/0/status
 ```
 
-**Expected Response:**
+Expected response:
 ```json
 {
   "batchId": "0",
   "totalPayouts": 3,
   "totalAmount": "600.000000",
   "ready": true,
-  "summary": {
-    "queued": 3,
-    "processing": 0,
-    "completed": 0,
-    "failed": 0
-  },
+  "summary": { "queued": 3, "processing": 0, "completed": 0, "failed": 0 },
   "payouts": [
     {
       "index": 0,
       "recipient": "0xRecipient1Address",
       "amount": "100.000000",
-      "destinationChain": "ARC",
+      "destinationChain": "ARC-TESTNET",
       "status": "QUEUED",
-      "circlePayoutId": "circle_payout_...",
-      "createdAt": "2026-02-27T10:05:00.000Z",
-      "updatedAt": "2026-02-27T10:05:00.000Z"
-    },
-    ...
+      "circleTransferId": "circle_transfer_..."
+    }
   ]
 }
 ```
@@ -330,165 +287,97 @@ curl http://localhost:3000/payouts/0/status
 
 ## Troubleshooting
 
-### "Invalid account: #0 for network: arcTestnet - private key too short"
+### "Invalid account: private key too short"
 
-**Solution**: Make sure your `ARC_PRIVATE_KEY` in `.env` is:
-- 66 characters long (0x + 64 hex digits)
-- A valid private key with funds
+`ARC_PRIVATE_KEY` must be `0x` + 64 hex characters (66 chars total). Re-export from MetaMask.
 
 ### "Cannot find module 'hardhat'"
 
-**Solution**: Run `npm install` in the project root.
+Run `npm install` in the project root.
 
-### "Worker not starting" or "Connection failed"
+### "Worker not starting / Connection failed"
 
-**Solution**:
-1. Check `ARC_TESTNET_RPC_URL` is valid and accessible
-2. Try: `curl <YOUR_RPC_URL>` to verify connectivity
-3. Check RPC endpoint allows WebSocket or HTTP polling
+1. Check `ARC_TESTNET_RPC_URL` is valid: `curl <YOUR_RPC_URL>`
+2. Check RPC allows WebSocket connections (worker uses WSS for real-time events)
 
 ### "No events detected"
 
-**Solution**:
-1. Verify you created a batch payout on-chain
-2. Check the correct router address is in backend `.env`
-3. Lower `fromBlock` in `payoutWorker.ts` if needed
+1. Verify the batch payout transaction was mined on-chain (check `testnet.arcscan.app`)
+2. Confirm `ARC_PAYOUT_ROUTER_ADDRESS` in `arcflow-backend/.env` matches the deployed address
 
 ### "Port 3000 already in use"
 
-**Solution**: Change `PORT` in `arcflow-backend/.env` or kill the process using port 3000:
 ```bash
 # Windows
 netstat -ano | findstr :3000
 taskkill /PID <PID> /F
 
-# Mac/Linux
+# macOS/Linux
 lsof -ti:3000 | xargs kill -9
 ```
+
+### Frontend shows "No wallet detected"
+
+Install [MetaMask](https://metamask.io/) browser extension.
+
+### Contract call reverts with "token address not configured"
+
+Ensure `VITE_USDC_ADDRESS` and `VITE_EURC_ADDRESS` are set in `arcflow-frontend/.env` and the dev server was restarted after editing.
+
+---
+
+## Enabling Live Circle Routing (Same-Chain)
+
+Set in `arcflow-backend/.env`:
+
+```env
+CIRCLE_API_KEY=<your-circle-api-key>
+CIRCLE_WALLET_ID=<your-circle-wallet-id>
+```
+
+The Circle client will switch from stub mode to live mode automatically. Same-chain transfers (ARC → ARC) call `api.circle.com/v1/w3s/wallets/{walletId}/transfers`.
+
+**Cross-chain transfers** (ARC → BASE, ETH, etc.) still use the stub path. Full cross-chain routing requires EIP-712 BurnIntent signing (see `arcflow-backend/src/services/circleClient.ts` comments and `circlefin/arc-multichain-wallet/lib/circle/gateway-sdk.ts`).
 
 ---
 
 ## Production Considerations
 
-### Before Production Deployment
+Before going to mainnet:
 
-1. **Circle Integration**
-   - [ ] Obtain Circle API keys
-   - [ ] Replace stub in `circleClient.ts` with real HTTP calls
-   - [ ] Implement webhook listener for status updates
-   - [ ] Add retry logic with exponential backoff
-
-2. **Database**
-   - [ ] Replace in-memory storage with PostgreSQL/MongoDB
-   - [ ] Add proper indexing for batch/payout lookups
-   - [ ] Implement data retention policies
-
-3. **Security**
-   - [ ] Use environment variable management (e.g., AWS Secrets Manager)
-   - [ ] Add rate limiting to API endpoints
-   - [ ] Implement authentication/authorization
-   - [ ] Enable HTTPS
-   - [ ] Add CORS configuration
-
-4. **Monitoring**
-   - [ ] Set up Prometheus metrics
-   - [ ] Add Grafana dashboards
-   - [ ] Configure alerting (PagerDuty, Slack)
-   - [ ] Add APM (e.g., New Relic, DataDog)
-
-5. **Testing**
-   - [ ] Add integration tests
-   - [ ] Load testing
-   - [ ] Security audit of smart contracts
-   - [ ] Penetration testing
-
-6. **Infrastructure**
-   - [ ] Deploy to cloud (AWS, GCP, Azure)
-   - [ ] Set up CI/CD pipeline
-   - [ ] Configure auto-scaling
-   - [ ] Add load balancer
-   - [ ] Set up backup/disaster recovery
-
----
-
-## Architecture Overview
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                       User / Frontend                        │
-└──────────────────────────┬──────────────────────────────────┘
-                           │
-                           ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    Arc Testnet (EVM)                         │
-│  ┌────────────────┐ ┌──────────────┐ ┌──────────────────┐  │
-│  │  ArcFlowEscrow │ │ ArcFlowStreams│ │ArcFlowPayoutRouter│  │
-│  └────────────────┘ └──────────────┘ └─────────┬─────────┘  │
-│                                                 │            │
-│                                      Emits: PayoutInstruction│
-└─────────────────────────────────────────────────┼───────────┘
-                                                  │
-                                                  ▼
-┌─────────────────────────────────────────────────────────────┐
-│                   ArcFlow Backend                            │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │              PayoutWorker (Event Listener)            │  │
-│  │  • Subscribes to PayoutInstruction events             │  │
-│  │  • Decodes event parameters                           │  │
-│  │  • Calls Circle API for each payout                   │  │
-│  │  • Tracks status in-memory (MVP) / DB (production)    │  │
-│  └───────────────────────┬──────────────────────────────┘  │
-│                          │                                  │
-│  ┌───────────────────────▼──────────────────────────────┐  │
-│  │             Express REST API Server                   │  │
-│  │  • GET /status - Health check                         │  │
-│  │  • GET /payouts/:batchId/status                       │  │
-│  │  • GET /payouts/:batchId/:index/status                │  │
-│  └──────────────────────────────────────────────────────┘  │
-└──────────────────────────┬──────────────────────────────────┘
-                           │
-                           ▼
-┌─────────────────────────────────────────────────────────────┐
-│               Circle API (Wallets/Gateway/CCTP)              │
-│  • STUB in MVP (logs only)                                  │
-│  • REAL in production (actual cross-chain transfers)        │
-└─────────────────────────────────────────────────────────────┘
-```
+- [ ] Smart contract security audit
+- [ ] Replace `PAYOUT_STORE_PATH` JSON with PostgreSQL/MongoDB
+- [ ] Add API authentication (JWT or API keys)
+- [ ] Add rate limiting middleware
+- [ ] Enable HTTPS + configure CORS
+- [ ] Set up secret management (AWS Secrets Manager / HashiCorp Vault)
+- [ ] Wire cross-chain Circle routing (BurnIntent + CCTP polling)
+- [ ] Add retry logic with exponential backoff for Circle API calls
+- [ ] Set up monitoring (Prometheus + Grafana or DataDog)
+- [ ] Configure CI/CD pipeline
 
 ---
 
 ## Success Checklist
 
-- [ ] Contracts compiled without errors
 - [ ] All 31 contract tests passing
-- [ ] Contracts deployed to Arc testnet
-- [ ] Deployment addresses saved
-- [ ] Backend `.env` configured
-- [ ] All 12 backend tests passing
-- [ ] Backend server running
-- [ ] Health check endpoint responding
-- [ ] Test batch payout created on-chain
-- [ ] Events detected by worker
-- [ ] Circle stub called successfully
-- [ ] Batch status retrievable via API
+- [ ] Contracts deployed; addresses saved
+- [ ] Frontend `.env` filled with contract + token addresses
+- [ ] Backend `.env` filled with router address
+- [ ] All 61 backend tests passing
+- [ ] Backend server running; `curl http://localhost:3000/status` returns `ok`
+- [ ] Frontend running at `http://localhost:5173`
+- [ ] Wallet connects to Arc Testnet (Chain ID 5042002)
+- [ ] Test escrow created → MetaMask prompt shown → ID returned
+- [ ] Test batch created → backend logs show `PayoutInstruction` event → status queryable
 
 ---
 
 ## Resources
 
-- **Arc Testnet Docs**: [Arc documentation URL]
-- **Circle Docs**: https://developers.circle.com/
-- **Hardhat Docs**: https://hardhat.org/docs
-- **Ethers.js Docs**: https://docs.ethers.org/
-
----
-
-## Support
-
-For issues or questions:
-1. Check the troubleshooting section above
-2. Review logs in `arcflow-backend/combined.log` and `error.log`
-3. Refer to individual READMEs in each package
-4. Open an issue on GitHub (if applicable)
-
-**Happy deploying! 🚀**
+- **Arc Testnet Explorer**: [testnet.arcscan.app](https://testnet.arcscan.app/)
+- **USDC/EURC Faucet**: [faucet.circle.com](https://faucet.circle.com/) — select **Arc Testnet**
+- **Circle Developer Docs**: [developers.circle.com](https://developers.circle.com/)
+- **Hardhat Docs**: [hardhat.org/docs](https://hardhat.org/docs)
+- **ethers.js v6 Docs**: [docs.ethers.org](https://docs.ethers.org/)
+- **arc-multichain-wallet reference**: [github.com/circlefin/arc-multichain-wallet](https://github.com/circlefin/arc-multichain-wallet)

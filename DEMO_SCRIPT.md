@@ -46,7 +46,7 @@ This document provides a structured script for demonstrating ArcFlow Treasury, c
 2. Configure a small batch:
    - 1–3 recipients.
    - Clear amounts.
-   - Destination chain labels (e.g. ARC, BASE, POLYGON).
+   - Destination chain labels (e.g. ARC, BASE, AVAX, ETH, ARB).
 3. Explain: "This creates a batch payout. Our ArcFlowPayoutRouter contract pulls the total USDC from my wallet and emits one PayoutInstruction event per recipient on Arc."
 4. Create the batch and note the batch ID.
 5. Show the backend status:

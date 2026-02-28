@@ -127,6 +127,9 @@ The **frontend** connects directly to Arc EVM via the user's injected wallet for
 
 ### Circle integration alignment
 
+![Screenshot 2026-02-28 183318](https://github.com/user-attachments/assets/3e2946d6-bd9a-446d-a825-8809de4b3ba1)
+
+
 The Circle client (`arcflow-backend/src/services/circleClient.ts`) is modelled directly on [`circlefin/arc-multichain-wallet`](https://github.com/circlefin/arc-multichain-wallet):
 
 | What | Value adopted from arc-multichain-wallet |
@@ -295,6 +298,8 @@ ARC_FEE_BPS=0
 
 > No live deployment is available for this MVP. Run locally using the steps above.
 
+![Screenshot 2026-02-28 121649](https://github.com/user-attachments/assets/b3ddaa75-4fed-44c3-8c60-fa17b9064179)
+
 | View | Description |
 |---|---|
 | **Dashboard** | 4-metric bento grid — USDC locked in escrow, locked in streams, pending batches, total obligations + Quick Actions |
@@ -441,6 +446,8 @@ curl http://localhost:3000/streams/1
 ```
 
 ---
+
+![Screenshot 2026-02-28 184926](https://github.com/user-attachments/assets/acb2edfd-41b0-40e0-83d8-a169b81be526)
 
 ## Tests
 

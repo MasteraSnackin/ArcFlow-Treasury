@@ -438,8 +438,8 @@ export default function PayrollPage() {
                     ["Employer", stream.employer],
                     ["Employee", stream.employee],
                     ["Token", stream.token],
-                    ["Total", `${stream.totalAmount} USDC`],
-                    ["Withdrawn", `${stream.withdrawn} USDC`],
+                    ["Total", `${stream.totalAmount} ${stream.token}`],
+                    ["Withdrawn", `${stream.withdrawn} ${stream.token}`],
                   ] as [string, string][]
                 ).map(([l, v]) => (
                   <div
@@ -495,7 +495,7 @@ export default function PayrollPage() {
                         fontWeight: 600,
                       }}
                     >
-                      {vestedPct}% ({stream.vested} USDC)
+                      {vestedPct}% ({stream.vested} {stream.token})
                     </span>
                   </div>
                   <ProgressBar
@@ -511,7 +511,7 @@ export default function PayrollPage() {
                     }}
                   >
                     <span>Withdrawn: {wdrawPct}%</span>
-                    <span>Withdrawable: {stream.withdrawable} USDC</span>
+                    <span>Withdrawable: {stream.withdrawable} {stream.token}</span>
                   </div>
                 </div>
               </div>
@@ -531,7 +531,7 @@ export default function PayrollPage() {
                   )}
                   {actionLoading === "withdraw"
                     ? "Withdrawing\u2026"
-                    : `Withdraw ${stream.withdrawable} USDC`}
+                    : `Withdraw ${stream.withdrawable} ${stream.token}`}
                 </button>
               )}
               {!stream.revoked && !confirmRevoke && (

@@ -453,7 +453,7 @@ export default function EscrowPage() {
                     ["Payer", escrow.payer],
                     ["Payee", escrow.payee],
                     ["Token", escrow.token],
-                    ["Amount", `${escrow.amount} USDC`],
+                    ["Amount", `${escrow.amount} ${escrow.token}`],
                     ["Arbitrator", escrow.arbitrator],
                   ] as [string, string][]
                 ).map(([l, v]) => (

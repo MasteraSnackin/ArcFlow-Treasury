@@ -407,7 +407,7 @@ export default function PayoutsPage() {
               {[
                 {
                   label: "Total Amount",
-                  value: `${(+batch.totalAmount).toLocaleString()} USDC`,
+                  value: `${(+batch.totalAmount).toLocaleString()} ${myBatches.find(b => b.id === batch.batchId)?.token ?? "USDC"}`,
                   color: "white",
                 },
                 {
@@ -536,7 +536,7 @@ export default function PayoutsPage() {
                             fontWeight: 600,
                           }}
                         >
-                          {(+p.amount).toLocaleString()} USDC
+                          {(+p.amount).toLocaleString()} {myBatches.find(b => b.id === batch.batchId)?.token ?? "USDC"}
                         </td>
                         <td style={{ padding: "11px 14px" }}>
                           <span

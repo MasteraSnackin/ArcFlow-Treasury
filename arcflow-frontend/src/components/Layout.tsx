@@ -68,28 +68,46 @@ export default function Layout() {
     return () => clearInterval(interval);
   }, []);
 
-  // Detect chain on mount and listen for changes
+  // Detect wallet + chain on mount; listen for MetaMask account/chain changes.
   useEffect(() => {
     const eth = getEth();
     if (!eth) return;
 
-    const handleChainChanged = (id: unknown) => {
-      setChainId(String(id));
+    const handleChainChanged = (id: unknown) => setChainId(String(id));
+
+    // accountsChanged fires when the user switches accounts or disconnects in MetaMask.
+    const handleAccountsChanged = (accounts: unknown) => {
+      const list = accounts as string[];
+      setWalletAddr(list.length > 0 ? list[0] : null);
     };
 
-    eth.request({ method: "eth_chainId" })
+    // eth_accounts is a passive read — no popup, no user prompt.
+    // Restores the connected address on every page load/refresh if the site
+    // was previously authorised by MetaMask.
+    eth.request({ method: "eth_accounts" })
+      .then((accounts) => {
+        const list = accounts as string[];
+        if (list.length > 0) setWalletAddr(list[0]);
+        return eth.request({ method: "eth_chainId" });
+      })
       .then((id) => setChainId(String(id)))
-      .catch(() => {/* not yet connected */});
+      .catch(() => {/* MetaMask not yet unlocked or no permission granted */});
 
     eth.on("chainChanged", handleChainChanged);
-    return () => eth.removeListener("chainChanged", handleChainChanged);
+    eth.on("accountsChanged", handleAccountsChanged);
+    return () => {
+      eth.removeListener("chainChanged", handleChainChanged);
+      eth.removeListener("accountsChanged", handleAccountsChanged);
+    };
   }, []);
 
   const connectWallet = async () => {
     const eth = getEth();
     if (eth) {
       try {
+        // eth_requestAccounts triggers the MetaMask connection popup.
         const accounts = await eth.request({ method: "eth_requestAccounts" }) as string[];
+        if (accounts.length === 0) return; // user closed popup without selecting an account
         setWalletAddr(accounts[0]);
         const id = await eth.request({ method: "eth_chainId" }) as string;
         setChainId(id);
@@ -101,7 +119,7 @@ export default function Layout() {
         }
       }
     } else {
-      // Simulate for demo (no MetaMask installed)
+      // No injected provider — simulate for demo purposes.
       setWalletAddr("0x1234567890abcdef1234567890abcdef12345678");
     }
   };

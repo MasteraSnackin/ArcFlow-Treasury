@@ -406,12 +406,8 @@ app.get("/streams/:id", (req: Request, res: Response) => {
  * Start server
  */
 const startServer = async () => {
-  try {
-    // Initialize and start worker (optional file persistence via PAYOUT_STORE_PATH)
-    worker = new PayoutWorker({ filePath: process.env.PAYOUT_STORE_PATH });
-    await worker.start();
-
-    // Start Express server
+  // Start HTTP server first — always available regardless of worker status.
+  await new Promise<void>((resolve, reject) => {
     app.listen(port, () => {
       logger.info(`Server running on port ${port}`);
       logger.info(`Health check:       http://localhost:${port}/status`);
@@ -419,10 +415,25 @@ const startServer = async () => {
       logger.info(`Circle webhook:     http://localhost:${port}/webhooks/circle`);
       logger.info(`Escrow status:      http://localhost:${port}/escrows/:id`);
       logger.info(`Stream status:      http://localhost:${port}/streams/:id`);
-    });
-  } catch (error) {
-    logger.error("Failed to start server", { error });
+      resolve();
+    }).on("error", reject);
+  }).catch((error) => {
+    logger.error("Failed to bind HTTP server", { error });
     process.exit(1);
+  });
+
+  // Start worker separately — failure is non-fatal so the API stays up.
+  // Without ARC_TESTNET_RPC_URL the worker cannot connect; status/webhook
+  // endpoints continue to work normally.
+  try {
+    worker = new PayoutWorker({ filePath: process.env.PAYOUT_STORE_PATH });
+    await worker.start();
+  } catch (error) {
+    logger.warn(
+      "PayoutWorker failed to start — event listening disabled. " +
+      "Set ARC_TESTNET_RPC_URL and ARC_PAYOUT_ROUTER_ADDRESS to enable it.",
+      { error }
+    );
   }
 };
 

@@ -4,7 +4,7 @@
 
 ![Build](https://img.shields.io/badge/build-passing-brightgreen)
 ![Contract Tests](https://img.shields.io/badge/contract%20tests-31%20passing-brightgreen)
-![Backend Tests](https://img.shields.io/badge/backend%20tests-12%20passing-brightgreen)
+![Backend Tests](https://img.shields.io/badge/backend%20tests-19%20passing-brightgreen)
 ![Solidity](https://img.shields.io/badge/solidity-0.8.20-blue)
 ![Network](https://img.shields.io/badge/network-Arc%20Testnet-purple)
 ![License](https://img.shields.io/badge/license-MIT-blue)
@@ -339,7 +339,7 @@ npm test
 
 Covers `ArcFlowEscrow`, `ArcFlowStreams`, and `ArcFlowPayoutRouter` using Hardhat + Chai matchers. Scenarios include happy paths, zero-address and zero-amount reverts, time-based auto-release, dispute resolution, stream vesting at 0%/50%/100%, revoke with pro-rata split, and large multi-recipient batches.
 
-### Backend tests — 12 tests
+### Backend tests — 19 tests
 
 ```bash
 cd arcflow-backend

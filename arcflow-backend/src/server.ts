@@ -150,9 +150,8 @@ let worker: PayoutWorker | null = null;
  */
 app.get("/status", (req: Request, res: Response) => {
   res.json({
-    status: "OK",
-    timestamp: new Date().toISOString(),
-    service: "arcflow-backend",
+    status: "ok",
+    network: "arc-testnet",
   });
 });
 

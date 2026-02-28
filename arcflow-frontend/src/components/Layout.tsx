@@ -59,7 +59,7 @@ export default function Layout() {
 
   useEffect(() => {
     const checkStatus = () => {
-      fetch("http://localhost:3000/status")
+      fetch(`${import.meta.env.VITE_BACKEND_URL ?? "http://localhost:3000"}/status`)
         .then((r) => (r.ok ? setApiStatus("online") : setApiStatus("offline")))
         .catch(() => setApiStatus("offline"));
     };

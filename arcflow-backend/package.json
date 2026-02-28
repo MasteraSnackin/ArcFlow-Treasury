@@ -8,10 +8,14 @@
     "dev:server": "tsx watch src/server.ts",
     "dev:worker": "tsx watch src/workers/payoutWorker.ts",
     "build": "tsc",
+    "start": "node dist/server.js",
     "start:server": "node dist/server.js",
     "start:worker": "node dist/workers/payoutWorker.js",
     "test": "vitest run",
     "test:watch": "vitest"
+  },
+  "engines": {
+    "node": ">=20.0.0"
   },
   "dependencies": {
     "@circle-fin/developer-controlled-wallets": "^10.0.1",

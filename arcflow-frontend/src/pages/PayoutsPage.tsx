@@ -184,7 +184,7 @@ export default function PayoutsPage() {
     setBatch(null);
     setNotFound(false);
     try {
-      const res = await fetch(`http://localhost:3000/payouts/${id}/status`);
+      const res = await fetch(`${import.meta.env.VITE_BACKEND_URL ?? "http://localhost:3000"}/payouts/${id}/status`);
       if (res.status === 404) { setNotFound(true); return; }
       if (!res.ok) throw new Error(`Server error ${res.status}`);
       const data = await res.json() as BatchStatus;
@@ -203,7 +203,7 @@ export default function PayoutsPage() {
   useEffect(() => {
     if (!lookupId) return;
     const id = setInterval(() => {
-      fetch(`http://localhost:3000/payouts/${lookupId}/status`)
+      fetch(`${import.meta.env.VITE_BACKEND_URL ?? "http://localhost:3000"}/payouts/${lookupId}/status`)
         .then((r) => (r.ok ? r.json() : null))
         .then((data) => { if (data) setBatch(data as BatchStatus); })
         .catch(() => {/* backend offline — silently skip */});

@@ -6,6 +6,25 @@ import { logger } from "./config/logger";
 const app = express();
 const port = process.env.PORT || 3000;
 
+// ---------------------------------------------------------------------------
+// CORS — must be registered before all other middleware so that preflight
+// OPTIONS requests are handled without a body parse attempt.
+// ---------------------------------------------------------------------------
+const allowedOrigin = process.env.FRONTEND_URL ?? "*";
+app.use((req, res, next) => {
+  res.setHeader("Access-Control-Allow-Origin", allowedOrigin);
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.setHeader(
+    "Access-Control-Allow-Headers",
+    "Content-Type, x-circle-signature"
+  );
+  if (req.method === "OPTIONS") {
+    res.sendStatus(200);
+    return;
+  }
+  next();
+});
+
 // Augmented request type — carries the raw body buffer for HMAC verification.
 interface RequestWithRawBody extends Request {
   rawBody?: Buffer;

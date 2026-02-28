@@ -15,6 +15,7 @@ import EmptyState from "../components/EmptyState";
 import { SkeletonLine } from "../components/Skeleton";
 import {
   getEscrowContract,
+  getEscrowContractReadOnly,
   approveIfNeeded,
   TOKEN_ADDRESSES,
   parseToken,
@@ -170,28 +171,41 @@ export default function EscrowPage() {
     setNotFound(false);
     setConfirmDispute(false);
     try {
-      const res = await fetch(`http://localhost:3000/escrows/${id}`);
-      if (res.status === 404) { setNotFound(true); return; }
-      if (!res.ok) throw new Error(`Server error ${res.status}`);
-      const data = await res.json() as {
-        id: string; payer: string; payee: string; token: string;
-        amount: string; expiry: number; arbitrator: string; status: string;
-      };
+      const contract = await getEscrowContractReadOnly();
+      const data = await contract.escrows(BigInt(id)) as [
+        string, string, string, bigint, bigint, string, boolean, boolean, boolean
+      ];
+      const [payer, payee, token, amount, expiry, arbitrator, disputed, released, refunded] = data;
+      if (payer === ZeroAddress) { setNotFound(true); return; }
+      const status: EscrowStatus =
+        released ? "RELEASED" :
+        refunded ? "REFUNDED" :
+        disputed ? "DISPUTED" :
+        "OPEN";
+      const tokenName =
+        Object.entries(TOKEN_ADDRESSES).find(
+          ([, addr]) => addr.toLowerCase() === token.toLowerCase()
+        )?.[0] ?? `${token.slice(0, 6)}\u2026${token.slice(-4)}`;
       const short = (addr: string) =>
-        addr ? `${addr.slice(0, 6)}\u2026${addr.slice(-4)}` : "";
+        addr && addr !== ZeroAddress ? `${addr.slice(0, 6)}\u2026${addr.slice(-4)}` : "None";
       setEscrow({
-        id: data.id,
-        payer: short(data.payer),
-        payee: short(data.payee),
-        token: data.token,
-        amount: formatToken(parseToken(parseFloat(data.amount).toFixed(6))),
-        expiry: data.expiry,
-        arbitrator: short(data.arbitrator),
-        status: data.status as EscrowStatus,
-        disputed: data.status === "DISPUTED",
+        id,
+        payer: short(payer),
+        payee: short(payee),
+        token: tokenName,
+        amount: formatToken(amount),
+        expiry: Number(expiry),
+        arbitrator: short(arbitrator),
+        status,
+        disputed,
       });
-    } catch {
-      toast.error("Lookup failed. Is the backend running?");
+    } catch (err: unknown) {
+      const msg =
+        (err as { shortMessage?: string }).shortMessage ??
+        (err as { message?: string }).message ??
+        "";
+      if (msg.toLowerCase().includes("not configured")) toast.error(msg);
+      else toast.error("Lookup failed — check your RPC connection and contract address.");
       setNotFound(true);
     } finally {
       setLoading(false);

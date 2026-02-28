@@ -15,10 +15,12 @@ import EmptyState from "../components/EmptyState";
 import { SkeletonLine } from "../components/Skeleton";
 import {
   getStreamsContract,
+  getStreamsContractReadOnly,
   approveIfNeeded,
   TOKEN_ADDRESSES,
   parseToken,
   formatToken,
+  ZeroAddress,
 } from "../lib/contracts";
 
 type Stream = {
@@ -184,43 +186,44 @@ export default function PayrollPage() {
     setNotFound(false);
     setConfirmRevoke(false);
     try {
-      const res = await fetch(`http://localhost:3000/streams/${id}`);
-      if (res.status === 404) { setNotFound(true); return; }
-      if (!res.ok) throw new Error(`Server error ${res.status}`);
-      const data = await res.json() as {
-        id: string; employer: string; employee: string; token: string;
-        totalAmount: string; startTime: number; cliffTime: number;
-        endTime: number; withdrawn: string; status: string;
-      };
+      const contract = await getStreamsContractReadOnly();
+      const data = await contract.streams(BigInt(id)) as [
+        string, string, string, bigint, bigint, bigint, bigint, bigint
+      ];
+      const [employer, employee, token, totalAmount, start, cliff, end, withdrawn] = data;
+      if (employer === ZeroAddress) { setNotFound(true); return; }
+      const vested = (await contract.getVested(BigInt(id))) as bigint;
+      const withdrawable = (await contract.getWithdrawable(BigInt(id))) as bigint;
+      // Revoked: contract sets withdrawn = totalAmount when employer revokes before end
+      const nowSec = BigInt(Math.floor(Date.now() / 1000));
+      const revoked = totalAmount > 0n && withdrawn === totalAmount && nowSec < end;
+      const tokenName =
+        Object.entries(TOKEN_ADDRESSES).find(
+          ([, addr]) => addr.toLowerCase() === token.toLowerCase()
+        )?.[0] ?? `${token.slice(0, 6)}\u2026${token.slice(-4)}`;
       const short = (addr: string) =>
         addr ? `${addr.slice(0, 6)}\u2026${addr.slice(-4)}` : "";
-      const total = parseFloat(data.totalAmount);
-      const withdrawn = parseFloat(data.withdrawn);
-      const nowSec = Date.now() / 1000;
-      let vested = 0;
-      if (nowSec >= data.cliffTime && data.endTime > data.cliffTime) {
-        vested = Math.min(
-          total,
-          total * (nowSec - data.cliffTime) / (data.endTime - data.cliffTime)
-        );
-      }
-      const withdrawable = Math.max(0, vested - withdrawn);
       setStream({
-        id: data.id,
-        employer: short(data.employer),
-        employee: short(data.employee),
-        token: data.token,
-        totalAmount: formatToken(parseToken(total.toFixed(6))),
-        start: data.startTime,
-        cliff: data.cliffTime,
-        end: data.endTime,
-        withdrawn: withdrawn.toFixed(2),
-        vested: vested.toFixed(2),
-        withdrawable: withdrawable.toFixed(2),
-        revoked: data.status === "REVOKED",
+        id,
+        employer: short(employer),
+        employee: short(employee),
+        token: tokenName,
+        totalAmount: formatToken(totalAmount),
+        start: Number(start),
+        cliff: Number(cliff),
+        end: Number(end),
+        withdrawn: formatToken(withdrawn),
+        vested: formatToken(vested),
+        withdrawable: formatToken(withdrawable),
+        revoked,
       });
-    } catch {
-      toast.error("Lookup failed. Is the backend running?");
+    } catch (err: unknown) {
+      const msg =
+        (err as { shortMessage?: string }).shortMessage ??
+        (err as { message?: string }).message ??
+        "";
+      if (msg.toLowerCase().includes("not configured")) toast.error(msg);
+      else toast.error("Lookup failed — check your RPC connection and contract address.");
       setNotFound(true);
     } finally {
       setLoading(false);

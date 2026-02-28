@@ -128,24 +128,29 @@ export default function PayoutsPage() {
       return;
     }
     setCreating(true);
-    await new Promise((r) => setTimeout(r, 1800));
-    setCreating(false);
-    setShowModal(false);
-    const newId = String(myBatches.length);
-    const newItem: MyBatch = {
-      id: newId,
-      recipients: recipients.length,
-      total: total.toFixed(2),
-      token,
-      createdAt: new Date().toISOString(),
-    };
-    const updatedBatches = [newItem, ...myBatches];
-    setMyBatches(updatedBatches);
-    localStorage.setItem("arcflow_my_batches", JSON.stringify(updatedBatches));
-    toast.success(
-      `Batch #${newId} created with ${recipients.length} payouts (${total.toFixed(2)} ${token})`
-    );
-    setRecipients([{ address: "", amount: "", chain: "ARC" }]);
+    try {
+      await new Promise((r) => setTimeout(r, 1800));
+      setShowModal(false);
+      const newId = String(myBatches.length);
+      const newItem: MyBatch = {
+        id: newId,
+        recipients: recipients.length,
+        total: total.toFixed(2),
+        token,
+        createdAt: new Date().toISOString(),
+      };
+      const updatedBatches = [newItem, ...myBatches];
+      setMyBatches(updatedBatches);
+      localStorage.setItem("arcflow_my_batches", JSON.stringify(updatedBatches));
+      toast.success(
+        `Batch #${newId} created with ${recipients.length} payouts (${total.toFixed(2)} ${token})`
+      );
+      setRecipients([{ address: "", amount: "", chain: "ARC" }]);
+    } catch {
+      toast.error("Failed to create batch. Please try again.");
+    } finally {
+      setCreating(false);
+    }
   };
 
   const doLookup = async (id: string) => {
@@ -153,19 +158,30 @@ export default function PayoutsPage() {
     setLoading(true);
     setBatch(null);
     setNotFound(false);
-    await new Promise((r) => setTimeout(r, 900));
-    setLoading(false);
-    if (id === "0") setBatch(MOCK_BATCH);
-    else setNotFound(true);
+    try {
+      await new Promise((r) => setTimeout(r, 900));
+      if (id === "0") setBatch(MOCK_BATCH);
+      else setNotFound(true);
+    } catch {
+      toast.error("Status fetch failed. Please try again.");
+      setNotFound(true);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleLookup = (e: React.FormEvent) => { e.preventDefault(); doLookup(lookupId); };
 
   const refresh = async () => {
     setLoading(true);
-    await new Promise((r) => setTimeout(r, 600));
-    setLoading(false);
-    toast.success("Status refreshed.");
+    try {
+      await new Promise((r) => setTimeout(r, 600));
+      toast.success("Status refreshed.");
+    } catch {
+      toast.error("Refresh failed. Please try again.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (

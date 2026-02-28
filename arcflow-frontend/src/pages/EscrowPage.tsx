@@ -98,21 +98,26 @@ export default function EscrowPage() {
       return;
     }
     setCreating(true);
-    await new Promise((r) => setTimeout(r, 1500));
-    setCreating(false);
-    setShowCreateModal(false);
-    const newId = String(myEscrows.length);
-    const newItem: MyEscrow = {
-      id: newId,
-      payee: formData.payee,
-      amount: formData.amount,
-      token: formData.token,
-      createdAt: new Date().toISOString(),
-    };
-    const updatedEscrows = [newItem, ...myEscrows];
-    setMyEscrows(updatedEscrows);
-    localStorage.setItem("arcflow_my_escrows", JSON.stringify(updatedEscrows));
-    toast.success(`Escrow #${newId} created!`);
+    try {
+      await new Promise((r) => setTimeout(r, 1500));
+      setShowCreateModal(false);
+      const newId = String(myEscrows.length);
+      const newItem: MyEscrow = {
+        id: newId,
+        payee: formData.payee,
+        amount: formData.amount,
+        token: formData.token,
+        createdAt: new Date().toISOString(),
+      };
+      const updatedEscrows = [newItem, ...myEscrows];
+      setMyEscrows(updatedEscrows);
+      localStorage.setItem("arcflow_my_escrows", JSON.stringify(updatedEscrows));
+      toast.success(`Escrow #${newId} created!`);
+    } catch {
+      toast.error("Failed to create escrow. Please try again.");
+    } finally {
+      setCreating(false);
+    }
   };
 
   const doLookup = async (id: string) => {
@@ -121,12 +126,18 @@ export default function EscrowPage() {
     setEscrow(null);
     setNotFound(false);
     setConfirmDispute(false);
-    await new Promise((r) => setTimeout(r, 800));
-    setLoading(false);
-    if (id === "0") {
-      setEscrow(MOCK_ESCROW);
-    } else {
+    try {
+      await new Promise((r) => setTimeout(r, 800));
+      if (id === "0") {
+        setEscrow(MOCK_ESCROW);
+      } else {
+        setNotFound(true);
+      }
+    } catch {
+      toast.error("Lookup failed. Please try again.");
       setNotFound(true);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -134,20 +145,25 @@ export default function EscrowPage() {
 
   const doAction = async (action: string) => {
     setActionLoading(action);
-    await new Promise((r) => setTimeout(r, 1200));
-    setActionLoading(null);
-    if (action === "dispute") {
-      setEscrow((e) => (e ? { ...e, status: "DISPUTED", disputed: true } : e));
-      toast.success("Dispute raised on Escrow #" + escrow?.id);
-    } else if (action === "release") {
-      setEscrow((e) => (e ? { ...e, status: "RELEASED" } : e));
-      toast.success("Escrow #" + escrow?.id + " auto-released to payee.");
-    } else if (action === "resolve-payee") {
-      setEscrow((e) => (e ? { ...e, status: "RELEASED" } : e));
-      toast.success("Dispute resolved — paid to payee.");
-    } else if (action === "resolve-payer") {
-      setEscrow((e) => (e ? { ...e, status: "REFUNDED" } : e));
-      toast.success("Dispute resolved — refunded to payer.");
+    try {
+      await new Promise((r) => setTimeout(r, 1200));
+      if (action === "dispute") {
+        setEscrow((e) => (e ? { ...e, status: "DISPUTED", disputed: true } : e));
+        toast.success("Dispute raised on Escrow #" + escrow?.id);
+      } else if (action === "release") {
+        setEscrow((e) => (e ? { ...e, status: "RELEASED" } : e));
+        toast.success("Escrow #" + escrow?.id + " auto-released to payee.");
+      } else if (action === "resolve-payee") {
+        setEscrow((e) => (e ? { ...e, status: "RELEASED" } : e));
+        toast.success("Dispute resolved — paid to payee.");
+      } else if (action === "resolve-payer") {
+        setEscrow((e) => (e ? { ...e, status: "REFUNDED" } : e));
+        toast.success("Dispute resolved — refunded to payer.");
+      }
+    } catch {
+      toast.error("Action failed. Please try again.");
+    } finally {
+      setActionLoading(null);
     }
   };
 

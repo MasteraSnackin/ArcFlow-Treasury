@@ -113,21 +113,26 @@ export default function PayrollPage() {
       return;
     }
     setCreating(true);
-    await new Promise((r) => setTimeout(r, 1500));
-    setCreating(false);
-    setShowModal(false);
-    const newId = String(myStreams.length);
-    const newItem: MyStream = {
-      id: newId,
-      employee: formData.employee,
-      amount: formData.totalAmount,
-      token: formData.token,
-      createdAt: new Date().toISOString(),
-    };
-    const updatedStreams = [newItem, ...myStreams];
-    setMyStreams(updatedStreams);
-    localStorage.setItem("arcflow_my_streams", JSON.stringify(updatedStreams));
-    toast.success(`Stream #${newId} created! Employee will start vesting immediately.`);
+    try {
+      await new Promise((r) => setTimeout(r, 1500));
+      setShowModal(false);
+      const newId = String(myStreams.length);
+      const newItem: MyStream = {
+        id: newId,
+        employee: formData.employee,
+        amount: formData.totalAmount,
+        token: formData.token,
+        createdAt: new Date().toISOString(),
+      };
+      const updatedStreams = [newItem, ...myStreams];
+      setMyStreams(updatedStreams);
+      localStorage.setItem("arcflow_my_streams", JSON.stringify(updatedStreams));
+      toast.success(`Stream #${newId} created! Employee will start vesting immediately.`);
+    } catch {
+      toast.error("Failed to create stream. Please try again.");
+    } finally {
+      setCreating(false);
+    }
   };
 
   const doLookup = async (id: string) => {
@@ -136,34 +141,45 @@ export default function PayrollPage() {
     setStream(null);
     setNotFound(false);
     setConfirmRevoke(false);
-    await new Promise((r) => setTimeout(r, 800));
-    setLoading(false);
-    if (id === "0") setStream(MOCK_STREAM);
-    else setNotFound(true);
+    try {
+      await new Promise((r) => setTimeout(r, 800));
+      if (id === "0") setStream(MOCK_STREAM);
+      else setNotFound(true);
+    } catch {
+      toast.error("Lookup failed. Please try again.");
+      setNotFound(true);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleLookup = (e: React.FormEvent) => { e.preventDefault(); doLookup(lookupId); };
 
   const doAction = async (action: string) => {
     setActionLoading(action);
-    await new Promise((r) => setTimeout(r, 1400));
-    setActionLoading(null);
-    if (action === "withdraw") {
-      setStream((s) =>
-        s
-          ? {
-              ...s,
-              withdrawn: (+s.withdrawn + +s.withdrawable).toFixed(2),
-              withdrawable: "0.00",
-            }
-          : s
-      );
-      toast.success(`Withdrew ${stream?.withdrawable} USDC successfully.`);
-    } else if (action === "revoke") {
-      setStream((s) => (s ? { ...s, revoked: true } : s));
-      toast.success(
-        "Stream revoked. Vested amount sent to employee, remainder refunded."
-      );
+    try {
+      await new Promise((r) => setTimeout(r, 1400));
+      if (action === "withdraw") {
+        setStream((s) =>
+          s
+            ? {
+                ...s,
+                withdrawn: (+s.withdrawn + +s.withdrawable).toFixed(2),
+                withdrawable: "0.00",
+              }
+            : s
+        );
+        toast.success(`Withdrew ${stream?.withdrawable} USDC successfully.`);
+      } else if (action === "revoke") {
+        setStream((s) => (s ? { ...s, revoked: true } : s));
+        toast.success(
+          "Stream revoked. Vested amount sent to employee, remainder refunded."
+        );
+      }
+    } catch {
+      toast.error("Action failed. Please try again.");
+    } finally {
+      setActionLoading(null);
     }
   };
 

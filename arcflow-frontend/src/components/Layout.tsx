@@ -92,8 +92,12 @@ export default function Layout() {
         setWalletAddr(accounts[0]);
         const id = await eth.request({ method: "eth_chainId" }) as string;
         setChainId(id);
-      } catch {
-        /* user rejected */
+      } catch (err: unknown) {
+        const code = (err as { code?: number }).code;
+        if (code !== 4001) {
+          // 4001 = user explicitly rejected; anything else is unexpected
+          toast.error("Wallet connection failed. Check MetaMask and try again.");
+        }
       }
     } else {
       // Simulate for demo (no MetaMask installed)
@@ -113,6 +117,9 @@ export default function Layout() {
       const code = (err as { code?: number }).code;
       if (code === 4902) {
         toast.error("Arc Testnet not found in wallet. Please add it manually.");
+      } else if (code !== 4001) {
+        // 4001 = user rejected the switch; anything else is unexpected
+        toast.error("Failed to switch network. Please switch manually in MetaMask.");
       }
     }
   };

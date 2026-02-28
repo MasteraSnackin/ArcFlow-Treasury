@@ -60,7 +60,7 @@ const CHAINS = ["ARC", "BASE", "AVAX", "ETH", "ARB"];
 
 const STATUS_BADGE: Record<string, string> = {
   QUEUED:     "badge-queued",
-  PROCESSING: "badge-queued",
+  PROCESSING: "badge-processing",
   COMPLETED:  "badge-done",
   FAILED:     "badge-failed",
 };
@@ -689,6 +689,7 @@ export default function PayoutsPage() {
                 </select>
                 <button
                   type="button"
+                  aria-label="Remove recipient"
                   onClick={() => removeRow(i)}
                   disabled={recipients.length === 1}
                   style={{

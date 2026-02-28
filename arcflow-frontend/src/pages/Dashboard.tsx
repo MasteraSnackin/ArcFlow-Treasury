@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { Link } from "react-router-dom";
 import { motion, type Variants } from "framer-motion";
 
@@ -19,7 +18,6 @@ import {
   Clock,
   ExternalLink,
 } from "lucide-react";
-import { MetricSkeleton } from "../components/Skeleton";
 import EmptyState from "../components/EmptyState";
 
 // Shapes mirror what each page writes to localStorage
@@ -61,8 +59,6 @@ const TYPE_ICON: Record<string, React.ElementType> = {
 };
 
 export default function Dashboard() {
-  const [loading] = useState(false);
-
   // Read session items from localStorage (written by EscrowPage, PayrollPage, PayoutsPage)
   const escrows = readLS<StoredEscrow>("arcflow_my_escrows");
   const streams = readLS<StoredStream>("arcflow_my_streams");
@@ -166,9 +162,7 @@ export default function Dashboard() {
           gap: 14,
         }}
       >
-        {loading
-          ? [1, 2, 3, 4].map((i) => <MetricSkeleton key={i} />)
-          : METRICS.map(({ label, value, token, icon: Icon, color, change }) => (
+        {METRICS.map(({ label, value, token, icon: Icon, color, change }) => (
               <motion.div
                 key={label}
                 variants={fadeUp}

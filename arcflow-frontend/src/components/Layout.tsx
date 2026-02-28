@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Outlet, NavLink, useLocation } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -12,6 +12,8 @@ import {
   AlertCircle,
   AlertTriangle,
   ChevronRight,
+  LogOut,
+  ChevronDown,
 } from "lucide-react";
 import toast from "react-hot-toast";
 
@@ -56,6 +58,19 @@ export default function Layout() {
   const [apiStatus, setApiStatus] = useState<"online" | "offline" | "loading">("loading");
   const [walletAddr, setWalletAddr] = useState<string | null>(null);
   const [chainId, setChainId] = useState<string | null>(null);
+  const [showMenu, setShowMenu] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  // Close the wallet menu when clicking outside of it.
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setShowMenu(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
   useEffect(() => {
     const checkStatus = () => {
@@ -122,6 +137,12 @@ export default function Layout() {
       // No injected provider — simulate for demo purposes.
       setWalletAddr("0x1234567890abcdef1234567890abcdef12345678");
     }
+  };
+
+  const disconnectWallet = () => {
+    setWalletAddr(null);
+    setChainId(null);
+    setShowMenu(false);
   };
 
   const switchNetwork = async () => {
@@ -392,12 +413,84 @@ export default function Layout() {
 
             {/* Wallet */}
             {walletAddr ? (
-              <button className="btn-secondary" style={{ gap: 6 }}>
-                <Wallet size={13} />
-                <span style={{ fontFamily: "monospace", fontSize: 12 }}>
-                  {shortAddr}
-                </span>
-              </button>
+              <div ref={menuRef} style={{ position: "relative" }}>
+                <button
+                  className="btn-secondary"
+                  style={{ gap: 6 }}
+                  onClick={() => setShowMenu((v) => !v)}
+                >
+                  <Wallet size={13} />
+                  <span style={{ fontFamily: "monospace", fontSize: 12 }}>
+                    {shortAddr}
+                  </span>
+                  <ChevronDown
+                    size={12}
+                    style={{
+                      opacity: 0.5,
+                      transition: "transform 0.15s",
+                      transform: showMenu ? "rotate(180deg)" : "rotate(0deg)",
+                    }}
+                  />
+                </button>
+
+                {showMenu && (
+                  <div
+                    style={{
+                      position: "absolute",
+                      top: "calc(100% + 6px)",
+                      right: 0,
+                      minWidth: 160,
+                      background: "rgba(17,17,24,0.97)",
+                      border: "1px solid rgba(255,255,255,0.1)",
+                      borderRadius: 10,
+                      boxShadow: "0 8px 32px rgba(0,0,0,0.4)",
+                      backdropFilter: "blur(20px)",
+                      overflow: "hidden",
+                      zIndex: 100,
+                    }}
+                  >
+                    <div
+                      style={{
+                        padding: "10px 14px 8px",
+                        borderBottom: "1px solid rgba(255,255,255,0.07)",
+                      }}
+                    >
+                      <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", marginBottom: 2 }}>
+                        Connected
+                      </div>
+                      <div style={{ fontFamily: "monospace", fontSize: 12, color: "rgba(255,255,255,0.75)" }}>
+                        {shortAddr}
+                      </div>
+                    </div>
+                    <button
+                      onClick={disconnectWallet}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 8,
+                        width: "100%",
+                        padding: "10px 14px",
+                        background: "transparent",
+                        border: "none",
+                        color: "#f87171",
+                        fontSize: 13,
+                        fontWeight: 500,
+                        cursor: "pointer",
+                        textAlign: "left",
+                      }}
+                      onMouseEnter={(e) => {
+                        (e.currentTarget as HTMLButtonElement).style.background = "rgba(239,68,68,0.1)";
+                      }}
+                      onMouseLeave={(e) => {
+                        (e.currentTarget as HTMLButtonElement).style.background = "transparent";
+                      }}
+                    >
+                      <LogOut size={14} />
+                      Disconnect
+                    </button>
+                  </div>
+                )}
+              </div>
             ) : (
               <button className="btn-primary" onClick={connectWallet}>
                 <Wallet size={14} /> Connect Wallet

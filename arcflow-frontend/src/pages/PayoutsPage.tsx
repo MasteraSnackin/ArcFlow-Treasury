@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import toast from "react-hot-toast";
 import {
   ArrowRightLeft,
@@ -198,6 +198,18 @@ export default function PayoutsPage() {
   };
 
   const handleLookup = (e: React.FormEvent) => { e.preventDefault(); doLookup(lookupId); };
+
+  // Auto-refresh batch status every 30 s (silent — no spinner, no toast)
+  useEffect(() => {
+    if (!lookupId) return;
+    const id = setInterval(() => {
+      fetch(`http://localhost:3000/payouts/${lookupId}/status`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data) => { if (data) setBatch(data as BatchStatus); })
+        .catch(() => {/* backend offline — silently skip */});
+    }, 30_000);
+    return () => clearInterval(id);
+  }, [lookupId]);
 
   const refresh = async () => {
     if (!lookupId) return;

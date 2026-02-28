@@ -44,7 +44,7 @@ const STATUS_MAP: Record<string, string> = {
   OPEN:       "badge-open",
   ACTIVE:     "badge-active",
   QUEUED:     "badge-queued",
-  PROCESSING: "badge-queued",
+  PROCESSING: "badge-processing",
   DISPUTED:   "badge-disputed",
   RELEASED:   "badge-done",
   REVOKED:    "badge-refunded",

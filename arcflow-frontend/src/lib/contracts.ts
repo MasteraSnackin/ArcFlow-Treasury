@@ -18,7 +18,7 @@ const ESCROW_ABI = [
   "function raiseDispute(uint256 escrowId)",
   "function autoRelease(uint256 escrowId)",
   "function resolveDispute(uint256 escrowId, bool releaseToPayee)",
-  "event EscrowCreated(uint256 indexed escrowId, address indexed payer, address indexed payee)",
+  "event EscrowCreated(uint256 indexed id, address indexed payer, address indexed payee, address token, uint256 amount, uint256 expiry, address arbitrator)",
 ];
 
 const STREAMS_ABI = [
@@ -28,12 +28,12 @@ const STREAMS_ABI = [
   "function getWithdrawable(uint256 id) view returns (uint256)",
   "function withdraw(uint256 id)",
   "function revoke(uint256 id)",
-  "event StreamCreated(uint256 indexed streamId, address indexed employer, address indexed employee)",
+  "event StreamCreated(uint256 indexed id, address indexed employer, address indexed employee, address token, uint256 totalAmount, uint256 start, uint256 cliff, uint256 end)",
 ];
 
 const PAYOUT_ABI = [
   "function createBatchPayout(address token, address[] recipients, uint256[] amounts, bytes32[] destinationChains) returns (uint256)",
-  "event BatchPayoutCreated(uint256 indexed batchId, address indexed creator, uint256 totalPayouts)",
+  "event BatchCreated(uint256 indexed batchId, address indexed creator, address indexed token, uint256 totalAmount)",
 ];
 
 const ERC20_ABI = [

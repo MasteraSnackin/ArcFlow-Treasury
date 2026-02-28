@@ -198,10 +198,10 @@ export default function PayrollPage() {
       const withdrawn = parseFloat(data.withdrawn);
       const nowSec = Date.now() / 1000;
       let vested = 0;
-      if (nowSec >= data.cliffTime && data.endTime > data.startTime) {
+      if (nowSec >= data.cliffTime && data.endTime > data.cliffTime) {
         vested = Math.min(
           total,
-          total * (nowSec - data.startTime) / (data.endTime - data.startTime)
+          total * (nowSec - data.cliffTime) / (data.endTime - data.cliffTime)
         );
       }
       const withdrawable = Math.max(0, vested - withdrawn);

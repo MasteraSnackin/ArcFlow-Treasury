@@ -130,7 +130,7 @@ export default function PayoutsPage() {
       setCreateStatus("Waiting for confirmation…");
       const receipt = await tx.wait();
 
-      // Parse BatchPayoutCreated event to get the real on-chain batch ID.
+      // Parse BatchCreated event to get the real on-chain batch ID.
       let newId = String(myBatches.length);
       if (receipt) {
         for (const log of receipt.logs) {
@@ -139,7 +139,7 @@ export default function PayoutsPage() {
               topics: [...log.topics],
               data: log.data,
             });
-            if (parsed?.name === "BatchPayoutCreated") {
+            if (parsed?.name === "BatchCreated") {
               newId = parsed.args[0].toString();
               break;
             }

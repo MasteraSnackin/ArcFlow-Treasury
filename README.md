@@ -46,10 +46,14 @@ The system runs on **Arc**, a Layer-1 blockchain built by Circle for stablecoin-
 - **Batch Payouts** — Create multi-recipient payout batches in a single transaction. Each recipient specifies a destination chain (`ARC`, `BASE`, `AVAX`, `ETH`, `ARB`) aligned to Circle's supported chain set.
 - **My Escrows / Streams / Batches** — localStorage-persisted list views on each page. Created items appear instantly and survive page refresh; click any item to auto-load it.
 - **Treasury Dashboard** — Real-time overview of USDC locked in escrows, streams, and pending payout batches, with Quick Actions and Recent Activity.
-- **Backend Event Worker** — Subscribes to on-chain `PayoutInstruction` events and routes them to Circle's payout infrastructure (stub wired for production integration).
-- **REST Status API** — Query payout batch and per-recipient status at any time without re-querying the chain. Batch totals use exact BigInt arithmetic (single-pass, 1.67× faster than multi-pass float).
-- **Indexed Payout Store** — In-memory store with `batchIndex` and `transferIndex` secondary indexes for O(k) batch retrieval and O(1) Circle transfer-ID lookups.
+- **USYC Support** — Hashnote tokenized US Treasury yield token (USYC) accepted alongside USDC and EURC across all three flows.
+- **Live Circle Integration** — Same-chain payouts call Circle Wallets API live when `CIRCLE_API_KEY` is set; cross-chain routes use Circle Gateway/CCTP (BurnIntent stubs to live with env var).
+- **Backend Event Indexer** — `EscrowStreamWorker` replays last 1 000 blocks and subscribes to all escrow + stream lifecycle events, maintaining in-memory indexes for instant O(1) lookups.
+- **Payout Event Worker** — `PayoutWorker` subscribes to `PayoutInstruction` events and dispatches to Circle Wallets/Gateway for off-chain settlement.
+- **REST Status API** — Query escrow, stream, and payout batch status instantly without re-querying the chain. Batch totals use exact BigInt arithmetic (single-pass, 1.67× faster than multi-pass float).
+- **Indexed Stores** — `EscrowStore`, `StreamStore`, and `PayoutStore` each use secondary indexes for O(1)/O(k) lookups. `PayoutStore` optionally persists to JSON for restarts.
 - **HMAC Webhook Security** — Circle webhook endpoint verifies `x-circle-signature` using `crypto.timingSafeEqual` to prevent timing attacks and forged status updates.
+- **Interactive Demo Page** — `/demo` route walks through all three flows with simulated delays — no MetaMask or testnet tokens required. Ideal for hackathon judging.
 - **MetaMask Integration** — One-click wallet connect with Arc Testnet chain detection and live API health indicator.
 - **Glassmorphism UI** — Dark dashboard with skeleton loading, consistent empty/error/success states, and toast notifications throughout.
 
@@ -71,7 +75,8 @@ The system runs on **Arc**, a Layer-1 blockchain built by Circle for stablecoin-
 | Icons | lucide-react |
 | Notifications | react-hot-toast |
 | Network | Arc EVM Testnet — Chain ID `5042002` |
-| Circle SDK (stub) | [`@circle-fin/developer-controlled-wallets`](https://github.com/circlefin/developer-controlled-wallets-sample-app) — Wallets API + Gateway / CCTP |
+| Token support | USDC, EURC, USYC (Hashnote tokenized US Treasury) |
+| Circle SDK (live) | Circle Wallets API (same-chain live) + Circle Gateway/CCTP (cross-chain) |
 | Circle reference | [`circlefin/arc-multichain-wallet`](https://github.com/circlefin/arc-multichain-wallet) — chain names, domain IDs, and dual-endpoint routing |
 
 ---
@@ -83,26 +88,35 @@ flowchart LR
   User["User / Finance Team\n(MetaMask Wallet)"]
   UI["ArcFlow Frontend\nVite + React SPA\nlocalhost:5173"]
   API["ArcFlow Backend API\nExpress + TypeScript\nlocalhost:3000"]
-  Worker["Payout Event Worker\nethers.js Listener"]
-  Store["PayoutStore\nIn-memory + batchIndex\n+ transferIndex"]
+  PayoutW["PayoutWorker\nBatchCreated events"]
+  EscrowW["EscrowStreamWorker\n1000-block replay + live"]
+  PayoutStore["PayoutStore\nbatchIndex + transferIndex"]
+  EscrowStore["EscrowStore + StreamStore\nO(1) indexed lookups"]
   Arc["Arc EVM Testnet\nChain ID 5042002"]
   Escrow["ArcFlowEscrow"]
   Streams["ArcFlowStreams"]
   Router["ArcFlowPayoutRouter"]
-  Circle["Circle\nWallets / Gateway / CCTP\n(stub for MVP)"]
+  CircleW["Circle Wallets API\n(same-chain, live)"]
+  CircleG["Circle Gateway\nCCTP (cross-chain)"]
 
   User -->|"sign transactions"| UI
   UI -->|"read state"| Arc
   UI -->|"write: createEscrow\ncreateStream\ncreateBatch"| Escrow & Streams & Router
-  UI -->|"REST poll\nGET /payouts/:id/status"| API
-  Router -->|"emit PayoutInstruction"| Arc
-  Worker -->|"subscribe WSS events"| Arc
-  Worker -->|"createTransfer"| Circle
-  Worker -->|"write"| Store
-  API -->|"read"| Store
-  Circle -->|"POST /webhooks/circle\nHMAC-SHA256"| API
-  API -->|"updateByCircleTransferId"| Store
-  Circle -.->|"cross-chain settlement\n(production)"| Arc
+  UI -->|"REST: /escrows/:id\n/streams/:id\n/payouts/:id/status"| API
+  Router -->|"emit BatchCreated\nPayoutInstruction"| Arc
+  Escrow -->|"emit Escrow events"| Arc
+  Streams -->|"emit Stream events"| Arc
+  PayoutW -->|"subscribe events"| Arc
+  EscrowW -->|"queryFilter + on()"| Arc
+  PayoutW -->|"createTransfer"| CircleW
+  PayoutW -->|"createTransfer"| CircleG
+  PayoutW -->|"write"| PayoutStore
+  EscrowW -->|"write"| EscrowStore
+  API -->|"read"| PayoutStore
+  API -->|"read"| EscrowStore
+  CircleW -->|"POST /webhooks/circle\nHMAC-SHA256"| API
+  CircleG -->|"POST /webhooks/circle"| API
+  API -->|"updateByCircleTransferId"| PayoutStore
 ```
 
 The **frontend** connects directly to Arc EVM via the user's injected wallet for all transaction signing and contract reads. The **backend worker** independently listens for `PayoutInstruction` events emitted by `ArcFlowPayoutRouter`, decodes each recipient's chain and amount, and calls the Circle API stub to initiate off-chain settlement. The **PayoutStore** maintains two secondary indexes — `batchIndex` (O(k) batch retrieval) and `transferIndex` (O(1) webhook lookups) — so no linear scans are needed. The **REST API** surfaces stored payout status and accepts HMAC-SHA256–signed Circle webhook callbacks to keep status up-to-date in real time.
@@ -374,11 +388,53 @@ curl -X POST http://localhost:3000/webhooks/circle \
 
 ### `GET /escrows/:id`
 
-Returns escrow status stub (mock data for `id=0`; 404 otherwise).
+Returns escrow details from the in-memory `EscrowStore` (populated by `EscrowStreamWorker`). Falls back to a direct on-chain read if not yet indexed. Returns 404 if the escrow does not exist or contracts are not deployed.
+
+```bash
+curl http://localhost:3000/escrows/1
+```
+
+```json
+{
+  "id": "1",
+  "payer": "0xAlice...",
+  "payee": "0xBob...",
+  "token": "0xUsdc...",
+  "amount": "5000.000000",
+  "expiry": 1740000000,
+  "arbitrator": "0xArbiter...",
+  "status": "OPEN",
+  "updatedAt": "2026-02-28T12:00:00.000Z"
+}
+```
+
+**Status values:** `OPEN` · `DISPUTED` · `RELEASED` · `REFUNDED`
+
+---
 
 ### `GET /streams/:id`
 
-Returns stream status stub (mock data for `id=0`; 404 otherwise).
+Returns stream details from the in-memory `StreamStore`. Falls back to a direct on-chain read if not yet indexed. Returns 404 if the stream does not exist.
+
+```bash
+curl http://localhost:3000/streams/1
+```
+
+```json
+{
+  "id": "1",
+  "employer": "0xAlice...",
+  "employee": "0xBob...",
+  "token": "0xUsdc...",
+  "totalAmount": "12000.000000",
+  "start": 1740000000,
+  "cliff": 1742678400,
+  "end": 1771536000,
+  "withdrawn": "1000.000000",
+  "revoked": false,
+  "updatedAt": "2026-02-28T12:00:00.000Z"
+}
+```
 
 ---
 
@@ -426,16 +482,22 @@ cd arcflow-frontend && npx tsc --noEmit
 
 ## Roadmap
 
-- [x] Wire frontend to real contract calls via ethers.js — `contracts.ts` helper with full approval flow; EscrowPage, PayrollPage, PayoutsPage all call real contracts
+- [x] Wire frontend to real contract calls via ethers.js — `contracts.ts` helper with full approval flow
 - [x] My Escrows / My Streams / My Batches list views — localStorage-persisted, click-to-load
-- [x] Live Circle same-chain payout routing — `circleClient.ts` calls Circle Wallets API when `CIRCLE_API_KEY` is set; cross-chain (BurnIntent/CCTP) still stub
-- [x] Persist payout state across restarts — optional JSON file persistence via `PAYOUT_STORE_PATH`; 200 ms debounced writes, full index rebuild on load
+- [x] Live Circle same-chain payout routing — `circleClient.ts` calls Circle Wallets API live when `CIRCLE_API_KEY` is set
+- [x] Circle Gateway cross-chain routing — `createCrossChainTransfer()` calls CCTP Gateway (stubs if `CIRCLE_BURN_TOKEN_ADDRESS` unset)
+- [x] Persist payout state across restarts — optional JSON file via `PAYOUT_STORE_PATH`; 200 ms debounced writes, full index rebuild on load
+- [x] EscrowStreamWorker — 1 000-block history replay + live subscriptions for all 8 escrow/stream event types
+- [x] EscrowStore + StreamStore — O(1) indexed lookups backing real `/escrows/:id` and `/streams/:id` endpoints
+- [x] USYC (Hashnote) token support across all three primitives
+- [x] Interactive Demo page — `/demo` with all three flows, no wallet required
 - [x] Network mismatch detection — warn and prompt auto-switch to Arc Testnet
+- [ ] CCTP EIP-712 BurnIntent full sign-and-mint flow (cross-chain live completion)
+- [ ] Persistent database (replace in-memory stores for production restarts)
 - [ ] Historical obligation charts on the dashboard
 - [ ] Multi-organisation support (org switcher for teams managing multiple wallets)
 - [ ] Fiat equivalent display (USDC → USD estimate via price oracle)
-- [ ] Full EURC label propagation (amounts currently displayed in USDC label)
-- [ ] Mainnet deployment guide and production security review
+- [ ] Mainnet deployment and production security audit
 
 ---
 

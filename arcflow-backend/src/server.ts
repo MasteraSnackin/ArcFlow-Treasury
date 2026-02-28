@@ -348,8 +348,26 @@ app.post("/webhooks/circle", (req: RequestWithRawBody, res: Response) => {
 });
 
 // ---------------------------------------------------------------------------
-// Escrow status stub endpoints
+// Escrow endpoints
 // ---------------------------------------------------------------------------
+
+/**
+ * List recently indexed escrows (newest first).
+ * Returns up to `limit` records (default 20, max 100).
+ * GET /escrows?limit=20
+ */
+app.get("/escrows", (req: Request, res: Response) => {
+  if (!escrowStreamWorker) {
+    return res.status(503).json({
+      error: "Escrow indexer not running — set ARC_ESCROW_ADDRESS and ARC_STREAMS_ADDRESS to enable",
+      escrows: [],
+    });
+  }
+  const limit = Math.min(parseInt(String(req.query.limit ?? "20"), 10) || 20, 100);
+  const all = escrowStreamWorker.escrowStore.list();
+  const recent = all.slice(-limit).reverse();
+  res.json({ total: all.length, escrows: recent });
+});
 
 /**
  * Get escrow status by ID.
@@ -393,8 +411,26 @@ app.get("/escrows/:id", async (req: Request, res: Response) => {
 });
 
 // ---------------------------------------------------------------------------
-// Stream status stub endpoints
+// Stream endpoints
 // ---------------------------------------------------------------------------
+
+/**
+ * List recently indexed streams (newest first).
+ * Returns up to `limit` records (default 20, max 100).
+ * GET /streams?limit=20
+ */
+app.get("/streams", (req: Request, res: Response) => {
+  if (!escrowStreamWorker) {
+    return res.status(503).json({
+      error: "Stream indexer not running — set ARC_ESCROW_ADDRESS and ARC_STREAMS_ADDRESS to enable",
+      streams: [],
+    });
+  }
+  const limit = Math.min(parseInt(String(req.query.limit ?? "20"), 10) || 20, 100);
+  const all = escrowStreamWorker.streamStore.list();
+  const recent = all.slice(-limit).reverse();
+  res.json({ total: all.length, streams: recent });
+});
 
 /**
  * Get stream status by ID.

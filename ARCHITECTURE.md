@@ -78,7 +78,7 @@ The user interacts solely with the frontend, which fans out to Arc (via wallet) 
 
 **Responsibilities**
 
-- Provide four pages: Dashboard, Escrow & Disputes, Payroll & Vesting, Payout Batches.
+- Provide six pages: Landing, Dashboard, Escrow & Disputes, Payroll & Vesting, Payout Batches, and an interactive Demo page (no wallet required).
 - Connect to Arc via injected wallet (MetaMask) using ethers.js v6 for transaction signing and contract reads.
 - Poll `GET /payouts/:batchId/status` on the backend for payout tracking.
 - Poll `GET /status` every 30 seconds for API health display in the topbar.
@@ -199,9 +199,11 @@ Batch {
 **Responsibilities**
 
 - Serve `GET /status` — health and network metadata.
+- Serve `GET /escrows/:id` — escrow details from `EscrowStore` with on-chain fallback.
+- Serve `GET /streams/:id` — stream details from `StreamStore` with on-chain fallback.
 - Serve `GET /payouts/:batchId/status` — aggregated payout status for a batch.
 - Serve `GET /payouts/:batchId/:index/status` — status for a single recipient.
-- Maintain an in-memory `Map<batchId, PayoutStatus[]>` populated by the worker.
+- Maintain in-memory `EscrowStore`, `StreamStore`, `PayoutStore` populated by workers.
 
 **Technologies:** Node.js 20+, Express 4.x, TypeScript 5.x, Winston 3.x (structured logging)
 
@@ -602,10 +604,10 @@ Not implemented in the MVP. In production, distributed tracing (e.g. OpenTelemet
 
 - **Database-backed payout store** — Replace JSON file persistence with PostgreSQL or Redis for horizontal scaling, atomic updates, and richer querying. The `PayoutStore` interface is unchanged; only the storage driver needs swapping.
 - **Circle cross-chain live routing** — Complete the BurnIntent/CCTP path in `circleClient.createTransfer()` for non-ARC destinations. Same-chain routing is already live when `CIRCLE_API_KEY` is set.
-- **On-chain indexer** — Use a lightweight indexer (e.g. Ponder, The Graph, or a custom block scanner) to power the backend `/escrows/:id` and `/streams/:id` endpoints with real contract data (currently stubs).
+- **On-chain indexer** — `EscrowStreamWorker` now provides 1 000-block replay + live subscriptions for all escrow and stream events. For full production history, extend to replay from the contract deployment block or migrate to The Graph/Ponder.
 - **Role-based access** — Introduce an organisational model mapping wallet addresses to admin / operator / read-only roles.
 - **Policy engine** — Server-side rules for minimum batch sizes, approval workflows, and scheduled payouts.
-- **Expanded token support** — Integrate USYC (Hashnote) for yield-bearing treasury reserves; extend UI with yield and FX views.
+- **Expanded token support** — USYC (Hashnote) is already integrated across all three primitives; future work includes yield display and FX views.
 - **Formal contract audit** — Security review of all three contracts before any mainnet deployment.
 - **Observability stack** — Add structured metrics, distributed tracing (OpenTelemetry), and alerting for failed payouts.
 

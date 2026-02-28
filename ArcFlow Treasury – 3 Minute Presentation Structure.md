@@ -76,31 +76,35 @@ Smart Contracts (Arc Testnet)
 31 passing tests
 Fee logic, time‑based releases, event emissions
 Backend Infrastructure
-Event‑driven worker (ethers.js)
-REST API for payout status
-Circle client stub (production‑ready interface)
-12 backend tests
+EscrowStreamWorker: live event indexer + 1000‑block history replay
+REST API for escrow, stream, and payout status
+Circle Wallets API (live same‑chain) + CCTP Gateway (cross‑chain)
+61 backend tests
+Frontend Dashboard
+React + Vite SPA: Dashboard, Escrow, Payroll, Payout pages
+Interactive Demo page (no wallet required)
+USDC / EURC / USYC token support
 Documentation
 Quick start, deployment guide, architecture docs
 Demo script and end‑to‑end flows
 Speaker notes:
-"We've implemented three production‑grade contracts on Arc testnet with comprehensive tests. The backend worker subscribes to on‑chain events and maintains payout state via a REST API. Circle integration is currently stubbed but structured to drop in real Gateway and Wallets APIs with minimal changes. Everything is documented with deployment guides and end‑to‑end examples."
+"We've implemented three production‑grade contracts on Arc testnet with comprehensive tests. The backend worker subscribes to on‑chain events via ethers.js and indexes all escrow and stream state into in‑memory stores, so the REST API serves any ID instantly. Circle integration is live for same‑chain transfers and structured for CCTP cross‑chain via the Gateway API. The React frontend has four working pages plus an interactive demo that walks through all three flows without needing a wallet."
 
 Slide 7: Demo Flow (30 seconds)
 Title: Live Demo Walkthrough
 Content (3 numbered steps with icons):
-1. Create Escrow
+1. Create Escrow  (Demo tab or live wallet)
 Lock USDC, set expiry, assign arbitrator
-Raise dispute, resolve on‑chain
-2. Fund Vesting Stream
+Raise dispute → arbitrator resolves on‑chain
+2. Fund Vesting Stream  (Demo tab or live wallet)
 Employer creates stream with cliff
-Employee withdraws vested amount
-3. Batch Payout
+Employee withdraws vested amount; employer can revoke
+3. Batch Payout  (Demo tab or live wallet)
 Define recipients + destination chains
-Backend captures events, routes via Circle stub
-Query status via API
+Backend indexes event, routes via Circle Wallets/CCTP
+Query per‑payout status via REST API
 Speaker notes:
-"In the demo, I'll show: creating an escrow with dispute resolution, funding a vesting stream and withdrawing, and creating a multi‑recipient batch payout where the backend picks up the events and routes them through the Circle integration point."
+"I'll use the built‑in Demo page—no wallet or testnet funds needed—to walk through all three flows in real time. Each tab simulates the full lifecycle: escrow creation, dispute, and resolution; vesting with a live countdown and cliff unlock; and a batch payout where rows flip from QUEUED to PROCESSING to COMPLETED. The same flows work end‑to‑end with a real MetaMask wallet on Arc Testnet."
 
 Slide 8: Hackathon Tracks (20 seconds)
 Title: Tracks Addressed
@@ -131,13 +135,16 @@ Speaker notes:
 Slide 10: Next Steps (15 seconds)
 Title: Roadmap
 Content:
-Wire full Circle Wallets/Gateway integration
-Add frontend UI (treasury dashboard)
-Implement webhook‑driven status updates
-Mainnet deployment and security audit
-Multi‑org support for teams
+✅ Circle Wallets same‑chain integration (live)
+✅ Frontend treasury dashboard (Dashboard, Escrow, Payroll, Payouts)
+✅ Webhook‑driven payout status updates
+✅ Event listener indexer (escrow + stream history + live)
+🔜 CCTP cross‑chain full sign‑and‑mint flow (EIP‑712 BurnIntent)
+🔜 Persistent DB (replace in‑memory stores for prod)
+🔜 Mainnet deployment and security audit
+🔜 Multi‑org support for teams
 Speaker notes:
-"Next steps are straightforward: wire the real Circle APIs, build out the treasury dashboard frontend, add webhook‑driven status updates, and prepare for mainnet with a full security audit."
+"We've shipped the core Circle integration, full frontend, webhooks, and the on‑chain event indexer. The remaining work for production is completing CCTP's BurnIntent signing flow, swapping in-memory stores for a persistent database, and a security audit before mainnet."
 
 Slide 11: Closing/Thank You (5 seconds)
 Title: Thank You

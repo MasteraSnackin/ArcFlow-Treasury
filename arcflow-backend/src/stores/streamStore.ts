@@ -68,6 +68,11 @@ export class StreamStore {
     return true;
   }
 
+  /** Return all records as an array in insertion order. */
+  list(): StreamRecord[] {
+    return Array.from(this.store.values());
+  }
+
   size(): number {
     return this.store.size;
   }

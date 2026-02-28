@@ -50,6 +50,11 @@ export class EscrowStore {
     return true;
   }
 
+  /** Return all records as an array in insertion order. */
+  list(): EscrowRecord[] {
+    return Array.from(this.store.values());
+  }
+
   size(): number {
     return this.store.size;
   }

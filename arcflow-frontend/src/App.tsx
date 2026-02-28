@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { Toaster } from "react-hot-toast";
 import Layout from "./components/Layout";
+import LandingPage from "./pages/LandingPage";
 import Dashboard from "./pages/Dashboard";
 import EscrowPage from "./pages/EscrowPage";
 import PayrollPage from "./pages/PayrollPage";
@@ -28,14 +29,16 @@ export default function App() {
         }}
       />
       <Routes>
+        {/* Landing page — full-page, outside the sidebar layout */}
+        <Route path="/" element={<LandingPage />} />
+        {/* App pages — inside sidebar layout */}
         <Route element={<Layout />}>
-          <Route index element={<Navigate to="/dashboard" replace />} />
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/escrow" element={<EscrowPage />} />
           <Route path="/payroll" element={<PayrollPage />} />
           <Route path="/payouts" element={<PayoutsPage />} />
           <Route path="/demo" element={<DemoPage />} />
-          <Route path="*" element={<Navigate to="/dashboard" replace />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>
     </BrowserRouter>

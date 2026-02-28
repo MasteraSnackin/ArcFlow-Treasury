@@ -9,6 +9,22 @@ import {
   CIRCLE_WALLETS_BASE_URL_DEFAULT,
 } from "../types";
 
+// ---------------------------------------------------------------------------
+// Static mapping: on-chain chain label → Circle blockchain identifier.
+// Extracted as a module-level constant so mapChainIdentifier() does not
+// allocate a new Record object on every invocation.
+// ---------------------------------------------------------------------------
+const CHAIN_MAP: Record<string, CircleBlockchainId> = {
+  ARC:       "ARC-TESTNET",
+  BASE:      "BASE-SEPOLIA",
+  AVAX:      "AVAX-FUJI",
+  AVALANCHE: "AVAX-FUJI",
+  ETH:       "ETH-SEPOLIA",
+  ETHEREUM:  "ETH-SEPOLIA",
+  ARB:       "ARB-SEPOLIA",
+  ARBITRUM:  "ARB-SEPOLIA",
+};
+
 /**
  * Circle API client stub.
  *
@@ -165,19 +181,7 @@ class CircleClient {
    */
   mapChainIdentifier(bytes32Chain: string): CircleBlockchainId {
     const chainName = bytes32Chain.replace(/\0/g, "").toUpperCase().trim();
-
-    const chainMap: Record<string, CircleBlockchainId> = {
-      ARC:       "ARC-TESTNET",
-      BASE:      "BASE-SEPOLIA",
-      AVAX:      "AVAX-FUJI",
-      AVALANCHE: "AVAX-FUJI",
-      ETH:       "ETH-SEPOLIA",
-      ETHEREUM:  "ETH-SEPOLIA",
-      ARB:       "ARB-SEPOLIA",
-      ARBITRUM:  "ARB-SEPOLIA",
-    };
-
-    const mapped = chainMap[chainName];
+    const mapped = CHAIN_MAP[chainName];
     if (!mapped) {
       logger.warn(
         `Unknown chain identifier "${chainName}", defaulting to ARC-TESTNET`,

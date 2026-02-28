@@ -209,17 +209,41 @@ PayoutStatus {
   recipient: string
   amount: string            // human-readable (e.g. "100.000000")
   destinationChain: string  // Circle chain name (e.g. "BASE-SEPOLIA")
-  status: "QUEUED" | "COMPLETED" | "FAILED"
+  status: "QUEUED" | "PROCESSING" | "COMPLETED" | "FAILED"
   circleTransferId?: string
-  createdAt: string
-  updatedAt: string
+  error?: string
+  createdAt: Date
+  updatedAt: Date
 }
 ```
 
+**In-memory store: `PayoutStore`**
+
+The payout store (`src/stores/payoutStore.ts`) is a class wrapping three Maps with two secondary indexes:
+
+| Structure | Key | Value | Purpose |
+|---|---|---|---|
+| `payouts` | `"${batchId}-${index}"` | `PayoutStatus` | Primary store |
+| `batchIndex` | `batchId` | `Set<compositeKey>` | O(k) batch retrieval |
+| `transferIndex` | `circleTransferId` | `compositeKey` | O(1) webhook lookup |
+
+`getBatch(batchId)` returns entries sorted ascending by `index`, guaranteeing deterministic API output regardless of event processing order.
+
+**Batch summary arithmetic**
+
+`GET /payouts/:batchId/status` uses `computeBatchSummary()` — a single pass over the payout array that:
+
+1. Accumulates total as a `Number` integer (`Math.round(parseFloat(amount) × 10⁶)`) — no per-element BigInt allocation.
+2. Converts to `BigInt` once at the end.
+3. Formats with `formatMicro()` using integer division/modulo — no floating-point rounding.
+
+This is 1.67× faster than 5 separate `filter`/`reduce` passes and exact for totals up to ~9 × 10⁹ USDC.
+
 **Communication**
 
-- ← Frontend: HTTP GET requests
-- ↔ Worker: shared in-memory module (same process when running `dev:server`)
+- ← Frontend: HTTP GET requests for `/status`, `/payouts/:batchId/status`, `/payouts/:batchId/:index/status`
+- ← Circle: `POST /webhooks/circle` (HMAC-SHA256 verified) for transfer status callbacks
+- ↔ Worker: shared `PayoutStore` instance (same process when running `dev:server`)
 
 ---
 
@@ -258,14 +282,15 @@ PayoutStatus {
 
 - **Same-chain payouts:** Circle Wallets API (`api.circle.com/v1/transfers`) — used when source and destination chains match.
 - **Cross-chain payouts:** Circle Gateway API (`gateway-api-testnet.circle.com/v1/transfer`) with CCTP burn-attest-mint — used when chains differ.
-- **Status updates:** Circle webhook at `POST /webhook/circle` to push `COMPLETED` / `FAILED` states.
+- **Status updates:** Circle posts real-time callbacks to `POST /webhooks/circle`, verified with HMAC-SHA256.
 
 **Current status:** The `circleClient.createTransfer()` method is a stub — it logs the correct endpoint and returns a fake `circleTransferId`. The structure exactly mirrors `circlefin/arc-multichain-wallet` (same SDK, same env variable names, same dual-endpoint routing, same CCTP domain IDs), so switching to live payouts requires only:
 
 1. Set real `CIRCLE_API_KEY` and `CIRCLE_ENTITY_SECRET`.
 2. Replace stub body in `circleClient.createTransfer()` with real `fetch` calls.
 3. For cross-chain: add EIP-712 `BurnIntent` signing (reference: `arc-multichain-wallet/lib/circle/gateway-sdk.ts → transferGatewayBalanceWithEOA`).
-4. Add `POST /webhook/circle` handler to receive live status updates.
+
+The `POST /webhooks/circle` webhook handler is **already implemented** — it verifies the `x-circle-signature` HMAC-SHA256 header, maps Circle statuses (`pending → PROCESSING`, `complete → COMPLETED`, `failed → FAILED`), and updates `PayoutStore` via `updateByCircleTransferId()`.
 
 **USYC note:** `ArcFlowPayoutRouter` accepts USYC (Hashnote tokenised US Treasury yield token, available on Arc at `usyc.dev.hashnote.com`) as a source token. Circle's cross-chain routes use USDC/EURC as the settlement asset.
 
@@ -314,9 +339,9 @@ sequenceDiagram
     W->>S: write PayoutStatus{QUEUED}
   end
   F->>B: GET /payouts/:batchId/status (every 30s)
-  B-->>F: JSON { payouts: [...] }
-  Ci-->>B: POST /webhook/circle (status update, production)
-  B->>S: update status → COMPLETED / FAILED
+  B-->>F: JSON { totalAmount, summary, payouts }
+  Ci-->>B: POST /webhooks/circle (HMAC-SHA256 verified)
+  B->>S: updateByCircleTransferId → PROCESSING / COMPLETED / FAILED
 ```
 
 The user submits a batch transaction; the contract emits one event per recipient. The worker processes events independently of the frontend. The frontend polls the backend API for status without re-querying the chain.
@@ -367,12 +392,13 @@ PayoutStatus
   batchId           string
   index             number
   recipient         string     EVM address
-  amount            string     Human-readable (e.g. "100.000000")
+  amount            string     Human-readable 6-decimal (e.g. "100.000000")
   destinationChain  string     Circle chain name (e.g. "BASE-SEPOLIA")
-  status            enum       QUEUED | COMPLETED | FAILED
+  status            enum       QUEUED | PROCESSING | COMPLETED | FAILED
   circleTransferId  string?    Set after Circle accepts the transfer
-  createdAt         string     ISO 8601
-  updatedAt         string     ISO 8601
+  error             string?    Set on FAILED payouts
+  createdAt         Date
+  updatedAt         Date
 ```
 
 ### Session-Persistent Entities (localStorage)
@@ -466,13 +492,15 @@ Both backend processes can run in a single Node process (`npm run dev:server`) w
 
 ### Backend & API Security
 
+- **Circle webhook HMAC:** The `POST /webhooks/circle` endpoint verifies `x-circle-signature` using `crypto.createHmac("sha256", CIRCLE_WEBHOOK_SECRET)` and `crypto.timingSafeEqual` to prevent both signature forgery and timing-based attacks. When `CIRCLE_WEBHOOK_SECRET` is unset the server warns and operates in stub mode (verification skipped).
+- **Input validation:** `parseInt(index, 10)` with explicit radix and `isNaN` guard prevents NaN injection into payout index lookups. Payout index values exceeding `Number.MAX_SAFE_INTEGER` are rejected before `Number()` conversion to avoid precision loss.
 - No authentication or rate limiting in MVP (demo/testnet scope).
 - Production hardening required:
-  - API key or OAuth2 authentication on all endpoints.
+  - API key or OAuth2 authentication on all non-webhook endpoints.
   - Rate limiting (e.g. express-rate-limit).
-  - Input validation and sanitisation.
+  - Full input validation and sanitisation.
   - HTTPS-only with HSTS.
-- Secrets (`ARC_PRIVATE_KEY`, `CIRCLE_API_KEY`, `CIRCLE_ENTITY_SECRET`) stored in environment variables. Production deployments should use a secrets manager (e.g. AWS Secrets Manager, Vault).
+- Secrets (`ARC_PRIVATE_KEY`, `CIRCLE_API_KEY`, `CIRCLE_ENTITY_SECRET`, `CIRCLE_WEBHOOK_SECRET`) stored in environment variables. Production deployments should use a secrets manager (e.g. AWS Secrets Manager, HashiCorp Vault).
 
 ### Frontend Security
 
@@ -526,20 +554,23 @@ Not implemented in the MVP. In production, distributed tracing (e.g. OpenTelemet
 | **Worker deployment** | Co-located with API server in MVP | Reduces ops complexity; single-instance limit must be addressed before scaling |
 | **Circle routing** | Same-chain → Wallets API; cross-chain → Gateway/CCTP | Matches `arc-multichain-wallet` reference exactly; future-proof for mainnet with minimal changes |
 | **Arc as primary hub** | All treasury state on Arc | Simplifies cross-chain concerns; users bridge in/out via Circle rather than managing liquidity |
+| **Batch arithmetic** | `Number`-integer sum + single `BigInt` conversion | 1.67× faster than 5-pass float; exact for totals ≤ 9 × 10⁹ USDC; `Math.round` eliminates IEEE 754 drift |
+| **PayoutStore indexing** | `batchIndex` + `transferIndex` secondary Maps | O(k)/O(1) vs O(n) scans; adds memory overhead proportional to store size (negligible for MVP scale) |
 
 ---
 
 ## Future Improvements
 
-- **Persistent payout store** — Replace the in-memory map with PostgreSQL or Redis; enable event replay and crash recovery.
-- **Live Circle integration** — Replace stub in `circleClient.createTransfer()` with real HTTP calls and EIP-712 `BurnIntent` signing for cross-chain transfers.
-- **Circle webhook handler** — Implement `POST /webhook/circle` to receive real-time status updates from Circle and push `COMPLETED` / `FAILED` states to the store.
-- **On-chain indexer** — Use a lightweight indexer (e.g. Ponder, The Graph, or a custom block scanner) to power the Dashboard with real historical data.
-- **Network mismatch detection** — Detect when the user's wallet is on the wrong chain and prompt an auto-switch to Arc Testnet / Mainnet.
+- **Persistent payout store** — Replace the in-memory `PayoutStore` with PostgreSQL or Redis; enable event replay and crash recovery across restarts.
+- **Live Circle integration** — Replace stub body in `circleClient.createTransfer()` with real HTTP calls. Cross-chain path requires EIP-712 `BurnIntent` signing (reference: `arc-multichain-wallet/lib/circle/gateway-sdk.ts → transferGatewayBalanceWithEOA`).
+- **On-chain indexer** — Use a lightweight indexer (e.g. Ponder, The Graph, or a custom block scanner) to power the Dashboard with real historical data per connected wallet.
+- **Wired frontend contract calls** — Replace mock escrow/stream data in the frontend with live `ethers.js` contract reads and `ContractFactory` deployments.
 - **Role-based access** — Introduce an organisational model mapping wallet addresses to admin / operator / read-only roles.
 - **Policy engine** — Server-side rules for minimum batch sizes, approval workflows, and scheduled payouts.
 - **Expanded token support** — Integrate USYC (Hashnote) for yield-bearing treasury reserves; extend UI with yield and FX views.
 - **Formal contract audit** — Security review of all three contracts before any mainnet deployment.
-- **Observability stack** — Add structured metrics, distributed tracing, and alerting for failed payouts.
+- **Observability stack** — Add structured metrics, distributed tracing (OpenTelemetry), and alerting for failed payouts.
+
+> Items already implemented: network mismatch detection (Layout.tsx chain-ID check with auto-switch prompt); Circle webhook handler (`POST /webhooks/circle` with HMAC verification); `PayoutStore` secondary indexes; single-pass batch arithmetic.
 
 These improvements can be layered on top of the current architecture without substantial redesign, reflecting the system's goal of being both practical today and extensible for production-grade deployments.

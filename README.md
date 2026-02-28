@@ -4,7 +4,7 @@
 
 ![Build](https://img.shields.io/badge/build-passing-brightgreen)
 ![Contract Tests](https://img.shields.io/badge/contract%20tests-31%20passing-brightgreen)
-![Backend Tests](https://img.shields.io/badge/backend%20tests-19%20passing-brightgreen)
+![Backend Tests](https://img.shields.io/badge/backend%20tests-53%20passing-brightgreen)
 ![Solidity](https://img.shields.io/badge/solidity-0.8.20-blue)
 ![Network](https://img.shields.io/badge/network-Arc%20Testnet-purple)
 ![License](https://img.shields.io/badge/license-MIT-blue)
@@ -47,7 +47,9 @@ The system runs on **Arc**, a Layer-1 blockchain built by Circle for stablecoin-
 - **My Escrows / Streams / Batches** — localStorage-persisted list views on each page. Created items appear instantly and survive page refresh; click any item to auto-load it.
 - **Treasury Dashboard** — Real-time overview of USDC locked in escrows, streams, and pending payout batches, with Quick Actions and Recent Activity.
 - **Backend Event Worker** — Subscribes to on-chain `PayoutInstruction` events and routes them to Circle's payout infrastructure (stub wired for production integration).
-- **REST Status API** — Query payout batch and per-recipient status at any time without re-querying the chain.
+- **REST Status API** — Query payout batch and per-recipient status at any time without re-querying the chain. Batch totals use exact BigInt arithmetic (single-pass, 1.67× faster than multi-pass float).
+- **Indexed Payout Store** — In-memory store with `batchIndex` and `transferIndex` secondary indexes for O(k) batch retrieval and O(1) Circle transfer-ID lookups.
+- **HMAC Webhook Security** — Circle webhook endpoint verifies `x-circle-signature` using `crypto.timingSafeEqual` to prevent timing attacks and forged status updates.
 - **MetaMask Integration** — One-click wallet connect with Arc Testnet chain detection and live API health indicator.
 - **Glassmorphism UI** — Dark dashboard with skeleton loading, consistent empty/error/success states, and toast notifications throughout.
 
@@ -82,26 +84,28 @@ flowchart LR
   UI["ArcFlow Frontend\nVite + React SPA\nlocalhost:5173"]
   API["ArcFlow Backend API\nExpress + TypeScript\nlocalhost:3000"]
   Worker["Payout Event Worker\nethers.js Listener"]
+  Store["PayoutStore\nIn-memory + batchIndex\n+ transferIndex"]
   Arc["Arc EVM Testnet\nChain ID 5042002"]
   Escrow["ArcFlowEscrow"]
   Streams["ArcFlowStreams"]
   Router["ArcFlowPayoutRouter"]
   Circle["Circle\nWallets / Gateway / CCTP\n(stub for MVP)"]
-  Store["In-Memory Store\nPayout Status"]
 
   User -->|"sign transactions"| UI
   UI -->|"read state"| Arc
   UI -->|"write: createEscrow\ncreateStream\ncreateBatch"| Escrow & Streams & Router
-  UI -->|"GET /payouts/:id/status"| API
+  UI -->|"REST poll\nGET /payouts/:id/status"| API
   Router -->|"emit PayoutInstruction"| Arc
-  Worker -->|"subscribe to events"| Arc
+  Worker -->|"subscribe WSS events"| Arc
   Worker -->|"createTransfer"| Circle
-  Worker -->|"write status"| Store
+  Worker -->|"write"| Store
   API -->|"read"| Store
+  Circle -->|"POST /webhooks/circle\nHMAC-SHA256"| API
+  API -->|"updateByCircleTransferId"| Store
   Circle -.->|"cross-chain settlement\n(production)"| Arc
 ```
 
-The **frontend** connects directly to Arc EVM via the user's injected wallet for all transaction signing and contract reads. The **backend worker** independently listens for `PayoutInstruction` events emitted by `ArcFlowPayoutRouter`, decodes each recipient's chain and amount, and calls the Circle API stub to initiate off-chain settlement. The **REST API** surfaces the worker's stored payout status so the frontend can poll without re-querying the chain.
+The **frontend** connects directly to Arc EVM via the user's injected wallet for all transaction signing and contract reads. The **backend worker** independently listens for `PayoutInstruction` events emitted by `ArcFlowPayoutRouter`, decodes each recipient's chain and amount, and calls the Circle API stub to initiate off-chain settlement. The **PayoutStore** maintains two secondary indexes — `batchIndex` (O(k) batch retrieval) and `transferIndex` (O(1) webhook lookups) — so no linear scans are needed. The **REST API** surfaces stored payout status and accepts HMAC-SHA256–signed Circle webhook callbacks to keep status up-to-date in real time.
 
 ### Circle integration alignment
 
@@ -290,7 +294,7 @@ curl http://localhost:3000/status
 
 ### `GET /payouts/:batchId/status`
 
-Returns aggregated status for all recipients in a payout batch.
+Returns a single-pass aggregated summary and the full payout list for a batch.
 
 ```bash
 curl http://localhost:3000/payouts/1/status
@@ -299,20 +303,24 @@ curl http://localhost:3000/payouts/1/status
 ```json
 {
   "batchId": "1",
+  "totalPayouts": 3,
+  "totalAmount": "5000.000000",
   "ready": true,
-  "totalAmount": "5000.00",
+  "summary": { "queued": 1, "processing": 1, "completed": 1, "failed": 0 },
   "payouts": [
     {
       "index": 0,
       "recipient": "0xabc...def",
-      "amount": "2500.00",
-      "destinationChain": "BASE",
+      "amount": "2500.000000",
+      "destinationChain": "BASE-SEPOLIA",
       "status": "COMPLETED",
       "circleTransferId": "circle_transfer_1234_5678"
     }
   ]
 }
 ```
+
+> `totalAmount` is computed with exact BigInt arithmetic (no floating-point drift), always formatted to 6 decimal places.
 
 ---
 
@@ -324,7 +332,34 @@ Returns status for a single recipient within a batch.
 curl http://localhost:3000/payouts/1/0/status
 ```
 
-**Status values:** `QUEUED` · `COMPLETED` · `FAILED`
+**Status values:** `QUEUED` · `PROCESSING` · `COMPLETED` · `FAILED`
+
+---
+
+### `POST /webhooks/circle`
+
+Receives Circle transfer status callbacks. Requires `Content-Type: application/json` and, when `CIRCLE_WEBHOOK_SECRET` is configured, the `x-circle-signature` HMAC-SHA256 hex header.
+
+```bash
+curl -X POST http://localhost:3000/webhooks/circle \
+  -H "Content-Type: application/json" \
+  -H "x-circle-signature: <hmac-hex>" \
+  -d '{"transfer":{"id":"circle_transfer_123","status":"complete"}}'
+```
+
+```json
+{ "received": true, "updated": true }
+```
+
+---
+
+### `GET /escrows/:id`
+
+Returns escrow status stub (mock data for `id=0`; 404 otherwise).
+
+### `GET /streams/:id`
+
+Returns stream status stub (mock data for `id=0`; 404 otherwise).
 
 ---
 
@@ -339,14 +374,21 @@ npm test
 
 Covers `ArcFlowEscrow`, `ArcFlowStreams`, and `ArcFlowPayoutRouter` using Hardhat + Chai matchers. Scenarios include happy paths, zero-address and zero-amount reverts, time-based auto-release, dispute resolution, stream vesting at 0%/50%/100%, revoke with pro-rata split, and large multi-recipient batches.
 
-### Backend tests — 19 tests
+### Backend tests — 53 tests
 
 ```bash
 cd arcflow-backend
 npm test
 ```
 
-Covers Circle client stub (`createTransfer`, `getTransferStatus`), chain identifier mapping (`ARC → ARC-TESTNET`, `BASE → BASE-SEPOLIA`, `AVAX → AVAX-FUJI`, `ETH → ETH-SEPOLIA`, `ARB → ARB-SEPOLIA`), CCTP domain ID lookups, `PayoutInstruction` event encoding/decoding, and Express route responses using Vitest.
+| File | Tests | Coverage |
+|---|---|---|
+| `test/circleClient.test.ts` | 15 | Chain mapping, CCTP domain IDs, auth headers, stub responses |
+| `test/eventDecoding.test.ts` | 4 | `PayoutInstruction` ABI event encoding and decoding |
+| `test/payoutStore.test.ts` | 17 | set/get/has, sorted getBatch, secondary-index correctness, overwrite semantics, cross-batch isolation |
+| `test/batchSummary.test.ts` | 17 | `amountToMicro` (exact parsing), `formatMicro` (round-trip), BigInt vs float divergence proof, `computeBatchSummary`, performance benchmark |
+
+Notable: `batchSummary.test.ts` includes a documented benchmark showing the single-pass `Number`-integer approach is **1.67× faster** than 5 separate `filter`/`reduce` float passes for N = 5 000 payouts × 200 runs.
 
 ### Type checking (all packages)
 
@@ -369,7 +411,7 @@ cd arcflow-frontend && npx tsc --noEmit
 - [x] My Escrows / My Streams / My Batches list views — localStorage-persisted, click-to-load
 - [ ] Connect Circle Wallets / Gateway for real cross-chain payout routing (replace stub in `circleClient.createTransfer()`)
 - [ ] Persist payout state to a database (replace in-memory store)
-- [ ] Network mismatch detection — warn and prompt auto-switch to Arc Testnet
+- [x] Network mismatch detection — warn and prompt auto-switch to Arc Testnet
 - [ ] Historical obligation charts on the dashboard
 - [ ] Multi-organisation support (org switcher for teams managing multiple wallets)
 - [ ] Fiat equivalent display (USDC → USD estimate via price oracle)

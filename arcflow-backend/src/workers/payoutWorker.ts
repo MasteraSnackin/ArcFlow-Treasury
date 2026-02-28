@@ -3,6 +3,7 @@ import { createArcProvider, getArcConfig } from "../config/arc";
 import { logger } from "../config/logger";
 import { circleClient } from "../services/circleClient";
 import { PayoutInstructionEvent, PayoutStatus, CircleTransferRequest } from "../types";
+import { PayoutStore } from "../stores/payoutStore";
 import PayoutRouterABI from "../abis/ArcFlowPayoutRouter.json";
 
 /**
@@ -24,7 +25,7 @@ import PayoutRouterABI from "../abis/ArcFlowPayoutRouter.json";
 class PayoutWorker {
   private provider: ethers.JsonRpcProvider;
   private contract: ethers.Contract;
-  private payoutStatuses: Map<string, PayoutStatus> = new Map();
+  readonly store: PayoutStore = new PayoutStore();
 
   constructor() {
     const config = getArcConfig();
@@ -122,10 +123,23 @@ class PayoutWorker {
       transactionHash: event.transactionHash,
     });
 
-    const payoutKey = `${batchId.toString()}-${index.toString()}`;
+    const batchStr = batchId.toString();
+
+    // Number(bigint) silently loses precision for values > Number.MAX_SAFE_INTEGER
+    // (2^53 − 1 ≈ 9×10^15).  A batch index at that scale is unrealistic, but the
+    // guard ensures we fail loudly rather than silently corrupt the store key.
+    if (index > BigInt(Number.MAX_SAFE_INTEGER)) {
+      logger.error("Payout index exceeds MAX_SAFE_INTEGER — cannot process safely", {
+        batchId: batchStr,
+        index: index.toString(),
+      });
+      return;
+    }
+    const indexNum = Number(index);
 
     // Idempotency: skip if already processed
-    if (this.payoutStatuses.has(payoutKey)) {
+    if (this.store.has(batchStr, indexNum)) {
+      const payoutKey = `${batchStr}-${indexNum}`;
       logger.info("Payout already processed, skipping", { payoutKey });
       return;
     }
@@ -158,8 +172,8 @@ class PayoutWorker {
       const circleResponse = await circleClient.createTransfer(circleRequest);
 
       const payoutStatus: PayoutStatus = {
-        batchId: batchId.toString(),
-        index: Number(index),
+        batchId: batchStr,
+        index: indexNum,
         recipient,
         amount: formattedAmount,
         destinationChain: chainLabel,
@@ -169,19 +183,21 @@ class PayoutWorker {
         updatedAt: new Date(),
       };
 
-      this.payoutStatuses.set(payoutKey, payoutStatus);
+      this.store.set(batchStr, indexNum, payoutStatus);
 
+      const payoutKey = `${batchStr}-${indexNum}`;
       logger.info("Payout instruction processed successfully", {
         payoutKey,
         circleTransferId: circleResponse.id,
         destinationChain: circleChain,
       });
     } catch (error) {
+      const payoutKey = `${batchStr}-${indexNum}`;
       logger.error("Failed to process payout instruction", { error, payoutKey });
 
-      this.payoutStatuses.set(payoutKey, {
-        batchId: batchId.toString(),
-        index: Number(index),
+      this.store.set(batchStr, indexNum, {
+        batchId: batchStr,
+        index: indexNum,
         recipient,
         amount: ethers.formatUnits(amount, 6),
         destinationChain: "unknown",
@@ -194,17 +210,25 @@ class PayoutWorker {
   }
 
   getPayoutStatus(batchId: string, index: number): PayoutStatus | undefined {
-    return this.payoutStatuses.get(`${batchId}-${index}`);
+    return this.store.get(batchId, index);
   }
 
   getBatchPayouts(batchId: string): PayoutStatus[] {
-    const payouts: PayoutStatus[] = [];
-    for (const [key, status] of this.payoutStatuses.entries()) {
-      if (key.startsWith(`${batchId}-`)) {
-        payouts.push(status);
-      }
-    }
-    return payouts;
+    return this.store.getBatch(batchId);
+  }
+
+  /**
+   * Update a payout's status by its Circle transfer ID.
+   * Called by the Circle webhook endpoint when a transfer's state changes.
+   *
+   * @returns true if a matching payout was found and updated.
+   */
+  updatePayoutStatusByTransferId(
+    circleTransferId: string,
+    status: PayoutStatus["status"],
+    error?: string
+  ): boolean {
+    return this.store.updateByCircleTransferId(circleTransferId, status, error);
   }
 
   async stop(): Promise<void> {

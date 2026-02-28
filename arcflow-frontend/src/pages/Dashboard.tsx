@@ -1,5 +1,16 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
+import { motion, type Variants } from "framer-motion";
+
+// ─── Animation variants ──────────────────────────────────────────────────
+const stagger: Variants = {
+  hidden: {},
+  show: { transition: { staggerChildren: 0.08, delayChildren: 0.05 } },
+};
+const fadeUp: Variants = {
+  hidden: { opacity: 0, y: 18 },
+  show: { opacity: 1, y: 0, transition: { duration: 0.45, ease: "easeOut" as const } },
+};
 import {
   ShieldCheck,
   GitBranch,
@@ -135,9 +146,17 @@ export default function Dashboard() {
   ].sort((a, b) => b._ts - a._ts).slice(0, 5);
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.3 }}
+      style={{ display: "flex", flexDirection: "column", gap: 24 }}
+    >
       {/* Metrics bento grid */}
-      <div
+      <motion.div
+        variants={stagger}
+        initial="hidden"
+        animate="show"
         style={{
           display: "grid",
           gridTemplateColumns: "repeat(4,1fr)",
@@ -147,9 +166,12 @@ export default function Dashboard() {
         {loading
           ? [1, 2, 3, 4].map((i) => <MetricSkeleton key={i} />)
           : METRICS.map(({ label, value, token, icon: Icon, color, change }) => (
-              <div
+              <motion.div
                 key={label}
-                className="glass-card glass-card-hover"
+                variants={fadeUp}
+                className={`glass-card glass-card-hover${
+                  label === "Total Treasury Value" ? " metric-highlight" : ""
+                }`}
                 style={{
                   padding: 20,
                   display: "flex",
@@ -215,12 +237,15 @@ export default function Dashboard() {
                 <div style={{ fontSize: 11, color, fontWeight: 500 }}>
                   {change}
                 </div>
-              </div>
+              </motion.div>
             ))}
-      </div>
+      </motion.div>
 
       {/* Two-column lower section */}
-      <div
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5, delay: 0.36, ease: "easeOut" }}
         style={{
           display: "grid",
           gridTemplateColumns: "1fr 340px",
@@ -503,7 +528,7 @@ export default function Dashboard() {
             </div>
           </div>
         </div>
-      </div>
-    </div>
+      </motion.div>
+    </motion.div>
   );
 }

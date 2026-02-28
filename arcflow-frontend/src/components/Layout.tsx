@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { Outlet, NavLink, useLocation } from "react-router-dom";
+import { motion, AnimatePresence } from "framer-motion";
 import {
   LayoutDashboard,
   ShieldCheck,
@@ -161,6 +162,7 @@ export default function Layout() {
         >
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <div
+              className="logo-glow"
               style={{
                 width: 34,
                 height: 34,
@@ -169,7 +171,6 @@ export default function Layout() {
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                boxShadow: "0 0 20px rgba(99,102,241,0.4)",
                 flexShrink: 0,
               }}
             >
@@ -422,12 +423,19 @@ export default function Layout() {
           </div>
         )}
 
-        {/* Page content */}
-        <main
-          style={{ flex: 1, padding: "28px", overflowY: "auto" }}
-        >
-          <Outlet />
-        </main>
+        {/* Page content — animated on route change */}
+        <AnimatePresence mode="wait">
+          <motion.main
+            key={location.pathname}
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -6 }}
+            transition={{ duration: 0.22, ease: "easeOut" }}
+            style={{ flex: 1, padding: "28px", overflowY: "auto" }}
+          >
+            <Outlet />
+          </motion.main>
+        </AnimatePresence>
       </div>
     </div>
   );

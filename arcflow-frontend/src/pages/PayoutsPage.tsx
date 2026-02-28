@@ -10,6 +10,7 @@ import {
   AlertCircle,
   Clock,
   List,
+  Loader,
 } from "lucide-react";
 import Modal from "../components/Modal";
 import EmptyState from "../components/EmptyState";
@@ -33,7 +34,7 @@ type PayoutRow = {
   recipient: string;
   amount: string;
   destinationChain: string;
-  status: "QUEUED" | "COMPLETED" | "FAILED";
+  status: "QUEUED" | "PROCESSING" | "COMPLETED" | "FAILED";
   circleTransferId?: string;
 };
 type BatchStatus = {
@@ -83,15 +84,17 @@ const MOCK_BATCH: BatchStatus = {
 const CHAINS = ["ARC", "BASE", "AVAX", "ETH", "ARB"];
 
 const STATUS_BADGE: Record<string, string> = {
-  QUEUED: "badge-queued",
-  COMPLETED: "badge-done",
-  FAILED: "badge-failed",
+  QUEUED:     "badge-queued",
+  PROCESSING: "badge-queued",
+  COMPLETED:  "badge-done",
+  FAILED:     "badge-failed",
 };
 
 const STATUS_ICON: Record<string, React.ElementType> = {
-  QUEUED: Clock,
-  COMPLETED: CheckCircle,
-  FAILED: AlertCircle,
+  QUEUED:     Clock,
+  PROCESSING: Loader,
+  COMPLETED:  CheckCircle,
+  FAILED:     AlertCircle,
 };
 
 export default function PayoutsPage() {
@@ -173,15 +176,9 @@ export default function PayoutsPage() {
   const handleLookup = (e: React.FormEvent) => { e.preventDefault(); doLookup(lookupId); };
 
   const refresh = async () => {
-    setLoading(true);
-    try {
-      await new Promise((r) => setTimeout(r, 600));
-      toast.success("Status refreshed.");
-    } catch {
-      toast.error("Refresh failed. Please try again.");
-    } finally {
-      setLoading(false);
-    }
+    if (!lookupId) return;
+    await doLookup(lookupId);
+    toast.success("Status refreshed.");
   };
 
   return (
@@ -515,14 +512,17 @@ export default function PayoutsPage() {
                         </td>
                         <td style={{ padding: "11px 14px" }}>
                           <span
-                            className={`badge ${STATUS_BADGE[p.status]}`}
+                            className={`badge ${STATUS_BADGE[p.status] ?? "badge-queued"}`}
                             style={{
                               display: "inline-flex",
                               alignItems: "center",
                               gap: 4,
                             }}
                           >
-                            <Icon size={11} />
+                            <Icon
+                              size={11}
+                              style={p.status === "PROCESSING" ? { animation: "spin 1s linear infinite" } : undefined}
+                            />
                             {p.status}
                           </span>
                         </td>

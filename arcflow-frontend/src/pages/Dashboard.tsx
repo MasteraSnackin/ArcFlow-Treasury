@@ -43,12 +43,15 @@ function timeAgo(iso: string): string {
 }
 
 const STATUS_MAP: Record<string, string> = {
-  OPEN: "badge-open",
-  ACTIVE: "badge-active",
-  QUEUED: "badge-queued",
-  DISPUTED: "badge-disputed",
-  RELEASED: "badge-done",
-  FAILED: "badge-failed",
+  OPEN:       "badge-open",
+  ACTIVE:     "badge-active",
+  QUEUED:     "badge-queued",
+  PROCESSING: "badge-queued",
+  DISPUTED:   "badge-disputed",
+  RELEASED:   "badge-done",
+  REVOKED:    "badge-refunded",
+  REFUNDED:   "badge-refunded",
+  FAILED:     "badge-failed",
 };
 
 const TYPE_ICON: Record<string, React.ElementType> = {
@@ -518,12 +521,12 @@ export default function Dashboard() {
                   width: 7,
                   height: 7,
                   borderRadius: "50%",
-                  background: "#34d399",
-                  boxShadow: "0 0 6px #34d399",
+                  background: "rgba(99,102,241,0.7)",
+                  boxShadow: "0 0 6px rgba(99,102,241,0.5)",
                 }}
               />
-              <span style={{ fontSize: 12, color: "#34d399", fontWeight: 500 }}>
-                Connected
+              <span style={{ fontSize: 12, color: "rgba(165,180,252,0.8)", fontWeight: 500 }}>
+                Arc Testnet
               </span>
             </div>
           </div>

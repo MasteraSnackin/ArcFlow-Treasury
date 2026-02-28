@@ -44,26 +44,31 @@ The system is built around three main layers that communicate through two interf
 ```mermaid
 flowchart LR
   User["User\n(MetaMask / Wallet)"]
-  UI["ArcFlow Frontend\nVite + React SPA\n:5173"]
-  API["Backend API\nExpress + TypeScript\n:3000"]
-  Worker["Event Worker\nNode + ethers.js"]
+
+  subgraph Vercel["Vercel (live)"]
+    UI["ArcFlow Frontend\nVite + React SPA\narcflow-frontend.vercel.app"]
+    API["Backend API\nExpress · Serverless\narcflow-backend.vercel.app"]
+  end
+
+  Worker["Event Worker\nNode + ethers.js\n(long-running host only)"]
   Arc["Arc EVM Testnet\nChain ID 5042002"]
   Contracts["Smart Contracts\nEscrow · Streams · PayoutRouter"]
   Store["PayoutStore\nIn-memory · optional\nJSON file via env"]
   Circle["Circle\nWallets / Gateway / CCTP"]
 
   User -->|"signs tx"| UI
-  UI -->|"eth_sendTransaction\neth_call"| Arc
+  UI -->|"eth_sendTransaction / eth_call\nvia contracts.ts + MetaMask"| Arc
   Arc --- Contracts
-  UI -->|"GET /payouts/:id/status\nGET /status"| API
+  UI -->|"GET /payouts/:id/status\nGET /status\n(VITE_BACKEND_URL)"| API
   API -->|"reads"| Store
-  Worker -->|"writes"| Store
-  Worker -->|"subscribes to events"| Arc
-  Worker -->|"createTransfer (stub)"| Circle
+  Worker -.->|"writes\n(not in serverless)"| Store
+  Worker -.->|"subscribes to\nPayoutInstruction events"| Arc
+  Worker -.->|"createTransfer"| Circle
+  Circle -.->|"POST /webhooks/circle\nHMAC-SHA256 verified"| API
   Circle -.->|"cross-chain settlement\n(production)"| Arc
 ```
 
-The user interacts solely with the frontend, which fans out to Arc (via wallet) and the backend API (via HTTP). The backend worker runs independently, consuming events from Arc and driving Circle-based off-chain settlement. Dashed arrows indicate a production path not yet active in the MVP.
+The user interacts solely with the frontend, which fans out to Arc (via wallet) and the backend API (via HTTP). The frontend and backend are both hosted on Vercel. The backend is a serverless Express handler — the `PayoutWorker` WebSocket listener only runs when deployed to a long-running host (Heroku / Render). Dashed arrows indicate paths that are inactive in the current Vercel serverless deployment but active when `ARC_TESTNET_RPC_URL` and `CIRCLE_API_KEY` are set on a persistent host.
 
 ---
 
@@ -102,8 +107,8 @@ The user interacts solely with the frontend, which fans out to Arc (via wallet) 
 
 **Communication**
 
-- → **Arc contracts:** `eth_sendTransaction` (writes), `eth_call` (reads) via MetaMask.
-- → **Backend API:** `fetch` to `GET /status` and `GET /payouts/:batchId/status`.
+- → **Arc contracts:** `eth_sendTransaction` (writes), `eth_call` (reads) via MetaMask. Contract helpers in `src/lib/contracts.ts` (`getEscrowContract`, `getStreamsContract`, `getPayoutContract`, `approveIfNeeded`). EscrowPage and PayrollPage read state directly from contracts via read-only providers; PayoutsPage reads from the backend.
+- → **Backend API:** `fetch` to `GET /status` and `GET /payouts/:batchId/status`. The base URL is `import.meta.env.VITE_BACKEND_URL` (falls back to `http://localhost:3000`), set to `https://arcflow-backend.vercel.app` in the Vercel production environment.
 
 ---
 
@@ -198,7 +203,13 @@ Batch {
 - Serve `GET /payouts/:batchId/:index/status` — status for a single recipient.
 - Maintain an in-memory `Map<batchId, PayoutStatus[]>` populated by the worker.
 
-**Technologies:** Node.js 18+, Express 4.x, TypeScript 5.x, Winston 3.x (structured logging)
+**Technologies:** Node.js 20+, Express 4.x, TypeScript 5.x, Winston 3.x (structured logging)
+
+**Vercel serverless entry point:** `api/index.ts` re-exports the Express `app` as default. Vercel routes all incoming requests through it; `app.listen()` is never called (Vercel manages the HTTP lifecycle). The `PayoutWorker` is not started in this environment — payout-related endpoints return `503 Worker not initialized` until the service is deployed to a long-running host and `ARC_TESTNET_RPC_URL` is set.
+
+**CORS:** A middleware registered before all other handlers sets `Access-Control-Allow-Origin` to `process.env.FRONTEND_URL` (defaults to `*`) and handles `OPTIONS` preflight requests. This allows the Vercel-hosted frontend to call the Vercel-hosted backend across different subdomains.
+
+**HTTP / Worker decoupling:** `app.listen()` is awaited first in `startServer()`; the `PayoutWorker` is then started in a separate `try/catch`. Worker failure (e.g. missing `ARC_TESTNET_RPC_URL`) logs a warning but does not crash the process — the API server remains available.
 
 **Key Data**
 
@@ -418,30 +429,52 @@ Stored under keys `arcflow_my_escrows`, `arcflow_my_streams`, `arcflow_my_batche
 
 ## Infrastructure & Deployment
 
-### MVP (Local / Hackathon)
+### Local Development
 
 ```
-[localhost:5173]  Vite dev server — React SPA
-[localhost:3000]  Node/Express API + Event Worker (same process via dev:server)
+[localhost:5173]  Vite dev server — React SPA  (npm run dev in arcflow-frontend/)
+[localhost:3000]  Node/Express API + Event Worker (npm run dev:server in arcflow-backend/)
 [Arc Testnet]     Public RPC endpoint — no local node required
 ```
 
-Both backend processes can run in a single Node process (`npm run dev:server`) which starts the Express server and attaches the worker, or as separate processes (`dev:server` + `dev:worker`) for isolation.
+Both backend processes can run in a single Node process (`npm run dev:server`) which starts the Express server and attaches the worker, or as separate processes (`dev:server` + `dev:worker`) for isolation. Set `VITE_BACKEND_URL=http://localhost:3000` in `arcflow-frontend/.env`.
 
-### Production (Recommended Path)
+### Current Deployment (Vercel — Live)
 
 ```
-┌────────────────────────────────────────────────────────┐
-│  CDN / Static Host  (e.g. Vercel, Cloudflare Pages)    │
-│  └─ React SPA (dist/)                                  │
-└────────────────────────────────────────────────────────┘
-        │ HTTPS                         │ HTTPS
-        ▼                               ▼
+┌──────────────────────────────────────────────────────────────────┐
+│  Vercel (CDN + Serverless)                                       │
+│                                                                  │
+│  arcflow-frontend.vercel.app    arcflow-backend.vercel.app       │
+│  ┌──────────────────────────┐   ┌──────────────────────────────┐ │
+│  │  React SPA (dist/)       │──▶│  Express app (api/index.ts)  │ │
+│  │  VITE_BACKEND_URL set    │   │  Serverless — no Worker      │ │
+│  └──────────────────────────┘   └──────────────────────────────┘ │
+└──────────────────────────────────────────────────────────────────┘
+                           │
+                           ▼
+              Arc EVM Testnet (via MetaMask)
+              Smart Contracts (addresses from .env)
+```
+
+**Serverless limitations:** The `PayoutWorker` WebSocket listener does not run in Vercel's short-lived function environment. Payout batch status endpoints (`/payouts/*`) return `503` until real `ARC_TESTNET_RPC_URL` is configured on a persistent host. The health check (`/status`), CORS preflight, and Circle webhook handler (`/webhooks/circle`) all work correctly.
+
+**Heroku alternative (full worker support):** Run `deploy-heroku.bat` from the repo root after `heroku login`. The script does `git subtree push --prefix arcflow-backend heroku main` — Heroku sees only the backend package, runs `npm run build` (`tsc`), then `npm start` (`node dist/server.js`). The persistent dyno keeps the `PayoutWorker` alive for continuous event listening.
+
+### Production Path (Recommended)
+
+```
+┌───────────────────────────────────────────────────┐
+│  Vercel (or Cloudflare Pages)                     │
+│  └─ React SPA (dist/)  VITE_BACKEND_URL set       │
+└───────────────────────────────────────────────────┘
+        │ HTTPS + CORS
+        ▼
 ┌─────────────────────┐     ┌─────────────────────────┐
 │  API Server         │     │  Event Worker            │
 │  Node + Express     │◄────│  Node + ethers           │
-│  (horizontally      │     │  (single instance,       │
-│   scalable)         │     │   restartable)           │
+│  Heroku / Render /  │     │  (single instance,       │
+│  Railway            │     │   restartable)           │
 └─────────┬───────────┘     └──────────┬──────────────┘
           │                            │
           ▼                            ▼
@@ -459,9 +492,10 @@ Both backend processes can run in a single Node process (`npm run dev:server`) w
 
 | Environment | Contracts | Backend | Frontend | Circle |
 |---|---|---|---|---|
-| **Development** | Arc Testnet | `localhost:3000` | `localhost:5173` | Stub |
-| **Staging** | Arc Testnet | Hosted (e.g. Railway) | Hosted | Testnet credentials |
-| **Production** | Arc Mainnet | Hosted (scaled) | CDN | Mainnet credentials |
+| **Local dev** | Arc Testnet | `localhost:3000` | `localhost:5173` | Stub |
+| **Live (current)** | — (addresses not yet set) | `arcflow-backend.vercel.app` (serverless) | `arcflow-frontend.vercel.app` | Stub |
+| **Staging** | Arc Testnet | Heroku / Render (persistent) | Vercel | Testnet credentials |
+| **Production** | Arc Mainnet | Hosted (scaled) | Vercel / CDN | Mainnet credentials |
 
 ---
 
@@ -554,7 +588,9 @@ Not implemented in the MVP. In production, distributed tracing (e.g. OpenTelemet
 | **Payout store** | In-memory with optional JSON file persistence (`PAYOUT_STORE_PATH`) | File mode survives restarts and replays indexes on load; database (Postgres/Redis) is the next step for horizontal scaling |
 | **Frontend data reads** | Direct from Arc via wallet (`eth_call`) | No indexer or subgraph needed; limits historical query capability |
 | **Session state** | `localStorage` for My-list views | Survives refresh; not synced across devices or wallet changes |
-| **Worker deployment** | Co-located with API server in MVP | Reduces ops complexity; single-instance limit must be addressed before scaling |
+| **Worker deployment** | Co-located with API server in long-running hosts; absent in Vercel serverless | Reduces ops complexity for Heroku/Render; payout tracking unavailable in serverless until persistent host added |
+| **CORS** | Inline middleware sets `Access-Control-Allow-Origin: FRONTEND_URL` (default `*`) | No extra `cors` package; `OPTIONS` preflight handled before body parse; tighten `FRONTEND_URL` in production |
+| **Backend host** | Vercel serverless (current); Heroku via `deploy-heroku.bat` (full worker) | Vercel is zero-ops and free tier; Heroku needed for persistent WebSocket event listening |
 | **Circle routing** | Same-chain → Wallets API; cross-chain → Gateway/CCTP | Matches `arc-multichain-wallet` reference exactly; future-proof for mainnet with minimal changes |
 | **Arc as primary hub** | All treasury state on Arc | Simplifies cross-chain concerns; users bridge in/out via Circle rather than managing liquidity |
 | **Batch arithmetic** | `Number`-integer sum + single `BigInt` conversion | 1.67× faster than 5-pass float; exact for totals ≤ 9 × 10⁹ USDC; `Math.round` eliminates IEEE 754 drift |
@@ -573,6 +609,6 @@ Not implemented in the MVP. In production, distributed tracing (e.g. OpenTelemet
 - **Formal contract audit** — Security review of all three contracts before any mainnet deployment.
 - **Observability stack** — Add structured metrics, distributed tracing (OpenTelemetry), and alerting for failed payouts.
 
-> Items already implemented: network mismatch detection (Layout.tsx chain-ID check with auto-switch prompt); Circle webhook handler (`POST /webhooks/circle` with HMAC verification); `PayoutStore` secondary indexes; single-pass batch arithmetic; **real frontend contract calls** (`contracts.ts` with `approveIfNeeded`, event-ID parsing, EscrowPage/PayrollPage/PayoutsPage all wired); **live Circle same-chain routing** (gated on `CIRCLE_API_KEY`); **JSON file persistence** for `PayoutStore` (gated on `PAYOUT_STORE_PATH`).
+> Items already implemented: network mismatch detection (Layout.tsx chain-ID check with auto-switch prompt); Circle webhook handler (`POST /webhooks/circle` with HMAC verification); `PayoutStore` secondary indexes; single-pass batch arithmetic; **real frontend contract calls** (`contracts.ts` with `approveIfNeeded`, event-ID parsing, EscrowPage/PayrollPage/PayoutsPage all wired); **live Circle same-chain routing** (gated on `CIRCLE_API_KEY`); **JSON file persistence** for `PayoutStore` (gated on `PAYOUT_STORE_PATH`); **CORS middleware** (gated on `FRONTEND_URL` env var); **Vercel deployment** — frontend at `arcflow-frontend.vercel.app`, backend at `arcflow-backend.vercel.app`; **`VITE_BACKEND_URL`** replaces all hardcoded `localhost:3000` references; **HTTP/Worker decoupling** — server binds before worker starts, worker failure is non-fatal; **`deploy-heroku.bat`** for one-command Heroku deployment with full worker support.
 
 These improvements can be layered on top of the current architecture without substantial redesign, reflecting the system's goal of being both practical today and extensible for production-grade deployments.

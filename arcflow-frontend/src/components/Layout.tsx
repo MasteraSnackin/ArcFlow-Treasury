@@ -14,6 +14,7 @@ import {
   ChevronRight,
   LogOut,
   ChevronDown,
+  FlaskConical,
 } from "lucide-react";
 import toast from "react-hot-toast";
 
@@ -32,6 +33,12 @@ const NAV = [
       { to: "/payouts", label: "Payout Batches",      icon: ArrowRightLeft },
     ],
   },
+  {
+    section: "Developer",
+    items: [
+      { to: "/demo", label: "Demo", icon: FlaskConical },
+    ],
+  },
 ];
 
 const PAGE_TITLES: Record<string, string> = {
@@ -39,6 +46,7 @@ const PAGE_TITLES: Record<string, string> = {
   "/escrow":    "Escrow & Disputes",
   "/payroll":   "Payroll & Vesting",
   "/payouts":   "Payout Batches",
+  "/demo":      "Demo",
 };
 
 const ARC_CHAIN_ID = "0x4cef52"; // 5042002 decimal

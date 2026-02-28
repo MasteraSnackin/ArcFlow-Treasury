@@ -749,6 +749,7 @@ export default function PayrollPage() {
               >
                 <option>USDC</option>
                 <option>EURC</option>
+                <option>USYC</option>
               </select>
             </div>
             <div>

@@ -104,6 +104,7 @@ export function getErc20Contract(tokenAddress: string, signerOrProvider: Awaited
 export const TOKEN_ADDRESSES: Record<string, string> = {
   USDC: (import.meta.env.VITE_USDC_ADDRESS as string | undefined) ?? "",
   EURC: (import.meta.env.VITE_EURC_ADDRESS as string | undefined) ?? "",
+  USYC: (import.meta.env.VITE_USYC_ADDRESS as string | undefined) ?? "",
 };
 
 export const DECIMALS = 6;
@@ -135,7 +136,7 @@ export async function approveIfNeeded(
 ): Promise<void> {
   if (!tokenAddr) {
     throw new Error(
-      "Token address not configured. Set VITE_USDC_ADDRESS or VITE_EURC_ADDRESS in your .env file."
+      "Token address not configured. Set VITE_USDC_ADDRESS, VITE_EURC_ADDRESS, or VITE_USYC_ADDRESS in your .env file."
     );
   }
   const signer = await getSigner();

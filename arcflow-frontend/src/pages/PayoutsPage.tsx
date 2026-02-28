@@ -616,6 +616,7 @@ export default function PayoutsPage() {
               >
                 <option>USDC</option>
                 <option>EURC</option>
+                <option>USYC</option>
               </select>
             </div>
             <div

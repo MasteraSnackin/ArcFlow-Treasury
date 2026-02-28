@@ -5,6 +5,7 @@ import Dashboard from "./pages/Dashboard";
 import EscrowPage from "./pages/EscrowPage";
 import PayrollPage from "./pages/PayrollPage";
 import PayoutsPage from "./pages/PayoutsPage";
+import DemoPage from "./pages/DemoPage";
 
 export default function App() {
   return (
@@ -33,6 +34,7 @@ export default function App() {
           <Route path="/escrow" element={<EscrowPage />} />
           <Route path="/payroll" element={<PayrollPage />} />
           <Route path="/payouts" element={<PayoutsPage />} />
+          <Route path="/demo" element={<DemoPage />} />
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Route>
       </Routes>
